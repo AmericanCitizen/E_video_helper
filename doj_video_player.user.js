@@ -1217,7 +1217,7 @@
                 <img src="${typeof GM_getResourceURL !== 'undefined' ? GM_getResourceURL('logo') : 'https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/logo.png'}" class="doj-logo" onerror="this.outerHTML='<div style=&quot;width: 80px; height: 80px; border-radius: 16px; background: linear-gradient(135deg, #dc2626, #991b1b); display: flex; align-items: center; justify-content: center; font-size: 40px; border: 2px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);&quot;>🎯</div>'">
                 <div class="doj-title-group">
                     <h3 class="doj-title">Epstein File Sniper</h3>
-                    <div class="doj-subtitle">v2.2 — Precision Extraction</div>
+                    <div class="doj-subtitle">v2.3 — Precision Extraction</div>
                     <div style="font-size: 10px; color: #ef4444; margin-top: 4px; opacity: 0.8;">
                         Target Lock: <span id="doj-copy-search" style="color: #fff; background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; cursor: pointer; border: 1px solid #ef4444;" title="Click to copy">No Images Produced</span>
                     </div>
