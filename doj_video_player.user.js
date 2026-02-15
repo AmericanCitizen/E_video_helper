@@ -738,6 +738,33 @@
             border-color: var(--cin-gold-dim);
         }
 
+        /* LARGE FILE / UNSTABLE STYLING */
+        .doj-file-item.too-large {
+            background: linear-gradient(90deg, rgba(245, 158, 11, 0.05), rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.05));
+            border-left: 3px solid #f59e0b;
+            box-shadow: inset 0 0 15px rgba(245, 158, 11, 0.1);
+        }
+
+        .doj-file-item.too-large .doj-file-name {
+            color: #fcd34d;
+        }
+
+        .doj-unstable-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+            font-size: 9px;
+            font-weight: 800;
+            border-radius: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-left: 8px;
+        }
+
         .doj-file-item.scanning {
             background: rgba(138, 0, 0, 0.1);
             border-left: 2px solid var(--cin-red-bright);
@@ -1867,6 +1894,11 @@
                 fileItem.classList.add('scanning');
             }
 
+            // Large file class
+            if (fileData.isTooLarge) {
+                fileItem.classList.add('too-large');
+            }
+
             // Opacity for detected items
             if (isDetected) fileItem.style.opacity = '0.7';
 
@@ -1909,9 +1941,13 @@
             fileItem.innerHTML = `
                 <div class="doj-file-icon ${fileData.category}" style="${isDetected ? 'filter:grayscale(1);' : ''}">${getCategoryIcon(fileData.category)}</div>
                 <div class="doj-file-info">
-                    <div class="doj-file-name" title="${filename}">${filename}</div>
-                    <div class="doj-file-size">
+                    <div class="doj-file-name" title="${filename}">
+                        ${filename}
+                        ${fileData.isTooLarge ? '<span class="doj-unstable-badge">⚠️ UNSTABLE</span>' : ''}
+                    </div>
+                    <div class="doj-file-size" style="${fileData.isTooLarge ? 'color: #f59e0b; font-weight: bold;' : ''}">
                         ${isDetected ? 'Pending Scan' : (fileData.size / 1024 / 1024).toFixed(1) + ' MB'} • ${fileData.category}
+                        ${fileData.isTooLarge ? ' • <span style="color:#ef4444">MANUAL DL RECOMMENDED</span>' : ''}
                     </div>
                     ${alternatesHtml}
                 </div>
@@ -2217,17 +2253,31 @@
             return;
         }
 
+        // Filter out large files
+        const tooLarge = pending.filter(f => f.isTooLarge);
+        const safePending = pending.filter(f => !f.isTooLarge);
+
+        if (safePending.length === 0 && tooLarge.length > 0) {
+            alert(`⚠️ ALL PENDING FILES ARE TOO LARGE\n\n${tooLarge.length} files exceed the 500MB safety limit.\nPlease download them manually using the direct links (highlighted in amber).`);
+            return;
+        }
+
         // SAFETY LIMIT: Cap "Extract All" at 100 to prevent browser crash
         const MAX_SAFE_LIMIT = 100;
-        let filesToDownload = pending;
+        let filesToDownload = safePending;
 
-        if (pending.length > MAX_SAFE_LIMIT) {
-            if (!confirm(`⚠️ BROWSER SAFETY LIMIT\n\nYou are attempting to download ${pending.length} files at once.\nTo prevent your browser from freezing, "Extract All" is capped at ${MAX_SAFE_LIMIT} files.\n\nClick OK to download the first ${MAX_SAFE_LIMIT} files.\n(To download more, use the "BATCH" button with a custom size in Settings)`)) {
+        let skipMsg = '';
+        if (tooLarge.length > 0) {
+            skipMsg = `\n\n(${tooLarge.length} unstable large files will be skipped for safety)`;
+        }
+
+        if (safePending.length > MAX_SAFE_LIMIT) {
+            if (!confirm(`⚠️ BROWSER SAFETY LIMIT\n\nYou are attempting to download ${safePending.length} files at once.\nTo prevent your browser from freezing, "Extract All" is capped at ${MAX_SAFE_LIMIT} files.${skipMsg}\n\nClick OK to download the first ${MAX_SAFE_LIMIT} files.\n(To download more, use the "BATCH" button with a custom size in Settings)`)) {
                 return;
             }
-            filesToDownload = pending.slice(0, MAX_SAFE_LIMIT);
+            filesToDownload = safePending.slice(0, MAX_SAFE_LIMIT);
         } else {
-            if (!confirm(`Download ${pending.length} files?`)) return;
+            if (!confirm(`Download ${safePending.length} files?${skipMsg}`)) return;
         }
 
         filesToDownload.forEach((fileData, index) => {
@@ -2247,11 +2297,21 @@
             return;
         }
 
-        const toDownload = pending.slice(0, limit);
+        // Filter out large files
+        const safePending = pending.filter(f => !f.isTooLarge);
+        const tooLarge = pending.filter(f => f.isTooLarge);
 
-        // Optional: Confirm if it's a large batch, but for "DL 10" maybe just do it?
-        // Let's keep it safe.
-        // if (!confirm(`Download next ${toDownload.length} files?`)) return;
+        if (safePending.length === 0 && tooLarge.length > 0) {
+            alert(`⚠️ BATCH SKIPPED\n\nAll pending files in this selection are too large for automated batch downloading.\nPlease handle them manually.`);
+            return;
+        }
+
+        const toDownload = safePending.slice(0, limit);
+        const skippedCount = pending.slice(0, limit).filter(f => f.isTooLarge).length;
+
+        if (skippedCount > 0) {
+            console.warn(`Batch download: Skipping ${skippedCount} large files in this range.`);
+        }
 
         toDownload.forEach((fileData, index) => {
             console.log(`Queueing batch download ${index + 1}/${toDownload.length}: ${fileData.url}`);
@@ -2587,9 +2647,10 @@
                     return { success: false, reason: 'false_positive_html' };
                 }
 
-                // Increase limit significantly (5GB) - Warn only, do not block.
-                if (contentLength > 5 * 1024 * 1024 * 1024) {
-                    console.warn(`Large file detected: ${fileUrl} (${(contentLength / 1024 / 1024).toFixed(2)} MB). Accepting.`);
+                // Check against safety limit (DEFAULT 500MB)
+                const isTooLarge = contentLength > (CONFIG.MAX_FILE_SIZE || 500 * 1024 * 1024);
+                if (isTooLarge) {
+                    console.warn(`Large file detected: ${fileUrl} (${(contentLength / 1024 / 1024).toFixed(2)} MB). Marking as unstable.`);
                 }
 
                 // Lowered thresholds: DOJ evidence files can be very short clips
@@ -2611,7 +2672,8 @@
                         size: contentLength,
                         type: contentType,
                         extension: extension,
-                        category: category
+                        category: category,
+                        isTooLarge: isTooLarge
                     };
                 } else {
                     console.warn(`Rejected candidate: ${fileUrl} | Size: ${contentLength} | Type: ${contentType} | ValidType: ${isValidType}`);
