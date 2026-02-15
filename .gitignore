@@ -7,7 +7,7 @@
 !/doj_video_player.user.js
 !/logo.jpg
 !/logo.png
-!/screenshots/
+!/screenshots/**
 
 # Ignore folders
 __pycache__/
