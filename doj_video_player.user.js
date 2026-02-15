@@ -4,15 +4,15 @@
 // @version      2.2
 // @description  Precision-targeted detection of videos, archives, and images mislabeled as PDFs on DOJ Epstein files page
 // @author       You
-// @updateURL    https://raw.githubusercontent.com/TheWhiteSasquatch/E_video_helper/main/doj_video_player.user.js
-// @downloadURL  https://raw.githubusercontent.com/TheWhiteSasquatch/E_video_helper/main/doj_video_player.user.js
+// @updateURL    https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js
+// @downloadURL  https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js
 // @match        https://www.justice.gov/epstein*
 // @match        https://www.justice.gov/age-verify*
 // @grant        GM_download
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setClipboard
 // @grant        GM_getResourceURL
-// @resource     logo https://raw.githubusercontent.com/TheWhiteSasquatch/E_video_helper/main/logo.jpg
+// @resource     logo https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/logo.jpg
 // @connect      justice.gov
 // @connect      *
 // @run-at       document-end
@@ -47,7 +47,7 @@
     // ------------------------------------
 
     const SCRIPT_VERSION = '2.2';
-    const UPDATE_URL = 'https://raw.githubusercontent.com/TheWhiteSasquatch/E_video_helper/main/doj_video_player.user.js';
+    const UPDATE_URL = 'https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js';
     console.log(`Epstein File Sniper v${SCRIPT_VERSION}: Scope locked, acquiring targets...`);
 
     // Default Configuration
@@ -1187,7 +1187,7 @@
 
         container.innerHTML = `
     <div class="doj-header">
-                <img src="${typeof GM_getResourceURL !== 'undefined' ? GM_getResourceURL('logo') : 'https://raw.githubusercontent.com/TheWhiteSasquatch/E_video_helper/main/logo.jpg'}" class="doj-logo" onerror="this.outerHTML='<div style=\'width: 80px; height: 80px; border-radius: 16px; background: linear-gradient(135deg, #dc2626, #991b1b); display: flex; align-items: center; justify-content: center; font-size: 40px; border: 2px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);\'>🎯</div>'">
+                <img src="${typeof GM_getResourceURL !== 'undefined' ? GM_getResourceURL('logo') : 'https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/logo.jpg'}" class="doj-logo" onerror="this.outerHTML='<div style=\'width: 80px; height: 80px; border-radius: 16px; background: linear-gradient(135deg, #dc2626, #991b1b); display: flex; align-items: center; justify-content: center; font-size: 40px; border: 2px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);\'>🎯</div>'">
                 <div class="doj-title-group">
                     <h3 class="doj-title">Epstein File Sniper</h3>
                     <div class="doj-subtitle">v2.2 — Precision Extraction</div>
