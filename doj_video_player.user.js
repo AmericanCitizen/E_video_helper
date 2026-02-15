@@ -338,9 +338,9 @@
         console.log('Config saved');
     }
 
-    // Create modern styles
-    const style = document.createElement('style');
-    style.textContent = `
+    function injectStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Playfair+Display:wght@700&display=swap');
 
         /* CINEMATIC THEME VARIABLES */
@@ -1154,9 +1154,9 @@
             background: rgba(139, 92, 246, 0.3);
             border-color: #8b5cf6;
         }
-
-    `;
-    document.body.appendChild(style);
+        `;
+        (document.body || document.documentElement).appendChild(style);
+    }
 
     // Helper for random delays with enhanced jitter
     const randomDelay = (min = CONFIG.DELAY_MIN || 500, max = CONFIG.DELAY_MAX || 1500) => {
@@ -1291,7 +1291,7 @@
             </div>
 `;
 
-        document.body.appendChild(container);
+        (document.body || document.documentElement).appendChild(container);
 
         // --- OPTIMIZATION: Event Delegation for File List ---
         const fileListEl = document.getElementById('doj-file-list');
@@ -3642,37 +3642,37 @@
 
     // Initialize
     function init() {
-        console.log('DOJ File Detector v1.4.0 (Extension-First): Initializing...');
+        console.log(`Epstein File Sniper v${SCRIPT_VERSION}: Initializing...`);
 
+        injectStyles();
         initConfig();
 
         // Inject Pulse Animation for button
-        const style = document.createElement('style');
-        style.textContent = `
+        const pulseStyle = document.createElement('style');
+        pulseStyle.textContent = `
                     @keyframes pulse {
                         0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
                         70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
                         100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
                     }
                     `;
-        document.head.appendChild(style);
+        (document.head || document.documentElement).appendChild(pulseStyle);
 
-        setTimeout(() => {
+        const start = () => {
+            if (document.getElementById('doj-file-detector')) return; // Avoid double init
+
             createMainInterface();
             StateManager.updateUI(); // Load saved history
             renderFileList();
-            // createPlayerInterface(); // Removed
             initNavigationObserver();
             collectPageLinks(); // Check immediately
 
             // Auto-Crawl Init
             updateAutoCrawlButton();
-            // Attach listener manualy since it wasn't in createMainInterface originally
             const crawlBtn = document.getElementById('doj-auto-crawl');
             if (crawlBtn) crawlBtn.onclick = toggleAutoCrawl;
 
-            // Trigger crawl if active (after collection)
-            // Trigger crawl if active (after collection)
+            // Trigger crawl if active
             if (localStorage.getItem('doj_auto_crawl') === 'true') {
                 triggerNextPage();
             }
@@ -3687,8 +3687,14 @@
                 }, 2000);
             }
 
-            console.log('DOJ File Detector v2.2: Ready!');
-        }, 1000);
+            console.log(`Epstein File Sniper v${SCRIPT_VERSION}: Ready!`);
+        };
+
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(start, 500);
+        } else {
+            window.addEventListener('DOMContentLoaded', () => setTimeout(start, 500));
+        }
     }
 
     init();
