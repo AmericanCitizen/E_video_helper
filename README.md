@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/logo.jpg" alt="Epstein File Sniper Logo" width="320" style="border-radius: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);">
+<img src="https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/logo.png" alt="Epstein File Sniper Logo" width="320" style="border-radius: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);">
 
 # 🎯 Epstein File Sniper
 **Precision Discovery & Media Extraction**
 
-[![Version](https://img.shields.io/badge/version-2.2-gold.svg?style=for-the-badge)](https://github.com/AmericanCitizen/E_video_helper)
+[![Version](https://img.shields.io/badge/version-2.3-gold.svg?style=for-the-badge)](https://github.com/AmericanCitizen/E_video_helper)
 [![Platform](https://img.shields.io/badge/platform-Tampermonkey-orange.svg?style=for-the-badge)](https://www.tampermonkey.net/)
 [![License](https://img.shields.io/badge/license-Research-red.svg?style=for-the-badge)](#disclaimer)
 [![VirusTotal](https://img.shields.io/badge/Security-VirusTotal%20Scan-brightgreen?style=for-the-badge&logo=virustotal)](https://www.virustotal.com/gui/file/05a4055570c2c1ef2ecc0221877e889f1daeca098e44c4103dbdbcc3fcf0b675/detection)
