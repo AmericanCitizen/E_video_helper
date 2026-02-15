@@ -99,7 +99,7 @@ The Sniper's behavior can be tuned via the **System Settings (⚙️)** or by ed
 To maximize efficiency and minimize detection while scanning a massive database like the DOJ's, follow this tiered strategy:
 
 ### 1️⃣ Phase 1: High-Value Targeted Strike
-Enable only the most common high-value extensions (e.g., **.mp4**, **.mov**, **.zip**) and run a full **Sweep Mode** across all pages. This identifies 80% of targets with minimal overhead.
+Enable only the most common high-value video extensions (e.g., **.mp4**, **.mov**, **.avi**) and run a full **Sweep Mode** across all pages. This identifies 80% of targets with minimal overhead.
 
 ### 2️⃣ Phase 2: Systematic Cleanup
 Enable broader categories like **Audio** or **Images** one by one. Run the scan again. Because the Sniper skips "Secured" or previously scanned "Failed" records (unless force-rescanned), this pass will be much faster.
