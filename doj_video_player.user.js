@@ -1771,13 +1771,18 @@
                 <div style="font-weight:600; font-size:12px; color:#fff; display:flex; align-items:center; gap:8px;">
                     ${getCategoryIcon(type)} ${type.toUpperCase()}
                 </div>
-                <button class="doj-btn doj-btn-secondary" style="padding: 2px 8px; font-size: 10px; height: auto;" title="Select only the 5 most popular formats">
-                    Top 5 Only
-                </button>
+                <div style="display:flex; gap:8px;">
+                    <button class="doj-btn doj-btn-secondary" id="btn-top5-${type}" style="padding: 2px 8px; font-size: 10px; height: auto;" title="Select only the 5 most popular formats">
+                        Top 5 Only
+                    </button>
+                    <button class="doj-btn doj-btn-secondary" id="btn-all-${type}" style="padding: 2px 8px; font-size: 10px; height: auto;" title="Enable all formats in this category">
+                        Enable All
+                    </button>
+                </div>
             `;
 
             // Top 5 Click Handler
-            header.querySelector('button').onclick = () => {
+            header.querySelector(`#btn-top5-${type}`).onclick = () => {
                 const top5 = TOP_EXTENSIONS[type] || [];
                 // Update Config
                 exts.forEach(ext => {
@@ -1786,11 +1791,25 @@
 
                 // Update UI Checkboxes
                 const inputs = group.querySelectorAll('input[type="checkbox"]');
-                inputs.forEach(input => {
+                inputs.forEach((input) => {
                     const ext = input.getAttribute('data-ext');
                     input.checked = top5.includes(ext);
                 });
+                saveConfig();
+            };
 
+            // Enable All Click Handler
+            header.querySelector(`#btn-all-${type}`).onclick = () => {
+                // Update Config to ALL TRUE
+                exts.forEach(ext => {
+                    CONFIG.ENABLED_EXTENSIONS[ext] = true;
+                });
+
+                // Update UI Checkboxes
+                const inputs = group.querySelectorAll('input[type="checkbox"]');
+                inputs.forEach((input) => {
+                    input.checked = true;
+                });
                 saveConfig();
             };
 
