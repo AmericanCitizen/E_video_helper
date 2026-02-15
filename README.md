@@ -78,13 +78,37 @@
 
 ---
 
-## ⚙️ Advanced Settings
+## ⚙️ Configurable Features
 
-Configure your operation via the **Gear (⚙️)** icon:
+The Sniper's behavior can be tuned via the **System Settings (⚙️)** or by editing the `DEFAULT_CONFIG` in the source code.
 
-*   **Extraction Targets**: Toggle Videos, Archives, Images, Audio, and Documents.
-*   **Performance Tuning**: Adjust Max Parallelism (1-5) and Request Delays.
-*   **Sweep Behavior**: Set page-load and crawl delays for automated sweeps.
+### 🛠️ Hardware & Network Tuning
+- **🚀 Max Parallelism**: Set the number of concurrent connections (1-5). Higher is faster but increases risk of CDN blocks.
+- **⏳ Sniper Timing (Delay)**: Adjust the minimum and maximum delay between requests to mimic human behavior.
+- **📦 Batch Size**: Control how many files are downloaded at once during a "Batch Extract" (Default: 100).
+- **📡 Auto-Crawl Delay**: Set how long to wait after a page load before the next automated sweep begins.
+
+### 🎯 Extraction Targets
+- **File Categories**: Enable or disable entire categories (Video, Archive, Image, Audio, Document, Forensic).
+- **Extension Filtering**: Drill down further in the settings to enable/disable specific file extensions (e.g., enable `.mov` only).
+
+---
+
+## 🎯 Optimization Strategy: The Sniper Method
+
+To maximize efficiency and minimize detection while scanning a massive database like the DOJ's, follow this tiered strategy:
+
+### 1️⃣ Phase 1: High-Value Targeted Strike
+Enable only the most common high-value extensions (e.g., **.mp4**, **.mov**, **.zip**) and run a full **Sweep Mode** across all pages. This identifies 80% of targets with minimal overhead.
+
+### 2️⃣ Phase 2: Systematic Cleanup
+Enable broader categories like **Audio** or **Images** one by one. Run the scan again. Because the Sniper skips "Secured" or previously scanned "Failed" records (unless force-rescanned), this pass will be much faster.
+
+### 3️⃣ Phase 3: Total Saturation (Deep Cycles)
+Once the "Pending" list is small enough, enable **all** categories and extensions. Use **Force Rescan** on specific pages that seem likely to contain evidence to run a "Total Blitz" on those records.
+
+> [!TIP]
+> Use **Sweep Mode** for long-running operations. If you hit a rate limit, the Sniper will pause and auto-resume once the cooldown expires.
 
 ---
 
