@@ -2124,26 +2124,10 @@
 
         setStatus(`Securing: ${filename}`, 'info');
 
-        if (typeof GM_download !== 'undefined') {
-            GM_download({
-                url: fileData.url,
-                name: filename,
-                onerror: function (err) {
-                    console.warn(`GM_download failed for ${filename} (Error: ${err.error}). Switching to fallback...`);
-                    // Fallback to Blob method
-                    downloadWithBlob(fileData, filename);
-                },
-                onload: function () {
-                    console.log('GM_download success:', filename);
-                    StateManager.markDownloaded(fileData.url);
-                    updateStats();
-                    renderFileList();
-                }
-            });
-        } else {
-            // If GM_download unavailable, use blob method
-            downloadWithBlob(fileData, filename);
-        }
+        // FORCE FORENSIC MODE (Blob) - Bypasses CORS and provides progress feedback
+        // The user reported GM_download failing silently.
+        // This downloads to memory first (providing progress bars) then saves to disk.
+        downloadWithBlob(fileData, filename);
     }
 
     // Fallback: Download via Blob (Bypasses CORS usually)
