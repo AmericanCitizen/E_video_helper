@@ -119,5 +119,14 @@ The Sniper performs high-speed **HEAD requests** to check file headers without d
 
 ---
 
+### 🔍 Expanded Forensic Support
+The Sniper now supports a wide range of specialized forensic formats, including:
+- **Mobile Backups**: *iPhone/iTunes* (.mbdb, .mbdx, .ips), *Android* (.ab, .backup).
+- **Forensic Containers**: *EnCase* (.L01), *XRY* (.xry), *Cellebrite* (.ufd), *Raw Splits* (.001, .002).
+- **Encrypted Volumes**: *TrueCrypt/VeraCrypt* (.tc, .hc, .vc).
+- **Databases**: *SQLite* (.db-wal, .db-shm), *Access* (.mdb, .accdb).
+
+---
+
 ## ⚖️ Disclaimer
 This script is for research and archival purposes only. Use responsibly and in accordance with applicable laws and website terms of service.

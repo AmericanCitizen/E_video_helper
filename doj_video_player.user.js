@@ -187,14 +187,19 @@
             // Disk Images / Forensic Containers
             '.E01', '.Ex01', '.ad1', '.dd', '.001', '.raw', '.img', '.vmdk', '.vhd', '.vhdx',
             '.aff', '.aff4', '.dmg', '.iso', '.bin', '.cue',
+            '.L01', '.Lx01', '.xry', '.dar', '.000', '.002', // [NEW] Extended Containers
             // Mobile Forensics (Cellebrite, Oxygen, etc)
             '.ufd', '.ufdx', '.ab', '.backup', '.xml', '.plist', '.db', '.sqlite', '.sqlite3',
+            '.mbdb', '.mbdx', '.ips', '.itdb', '.itl', '.amcache', '.hve', // [NEW] Mobile/Backup
             // System Logs & Artifacts
             '.evtx', '.evt', '.reg', '.pcap', '.pcapng', '.etl', '.pf', '.lnk',
             // Crypto / Financial
             '.wallet', '.key', '.dat', '.kdbx',
+            '.tc', '.vc', '.hc', '.cry', '.axx', // [NEW] Encrypted
             // Email Containers
-            '.pst', '.ost', '.mbox', '.dbx'
+            '.pst', '.ost', '.mbox', '.dbx',
+            // Database
+            '.db-wal', '.db-shm', `.mdb`, `.accdb` // [NEW] Database
         ]
     };
 
