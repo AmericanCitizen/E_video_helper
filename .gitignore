@@ -1,0 +1,16 @@
+# Default: Ignore everything in the root
+/*
+
+# Allow list: ONLY these files should be on GitHub
+!/.gitignore
+!/README.md
+!/doj_video_player.user.js
+!/logo.jpg
+!/screenshots/
+
+# Ignore folders
+__pycache__/
+.claude/
+.gemini/
+.vscode/
+downloaded_videos/
