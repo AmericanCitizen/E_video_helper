@@ -3650,10 +3650,10 @@
         const style = document.createElement('style');
         style.textContent = `
                     @keyframes pulse {
-                        0 % { box- shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-                    70% {box - shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-                    100% {box - shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-            }
+                        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                        70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+                        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                    }
                     `;
         document.head.appendChild(style);
 
