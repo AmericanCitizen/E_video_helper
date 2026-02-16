@@ -63,6 +63,8 @@
         USE_STEALTH_MODE: true, // Enable advanced anti-bot features
         RANDOMIZE_ORDER: true,  // Shuffle link checking order
         MAX_CONCURRENT: 3,      // 3 parallel requests — biggest speed multiplier
+        MAX_BLOB_SIZE_MB: 500,  // Max size for internal blob downloader (RAM dependent)
+        SAFETY_BATCH_LIMIT: 100, // Max files to queue at once without warning
         ENABLED_TYPES: {
             video: true,
             archive: true,  // Enabled for finding project files in zips
@@ -300,108 +302,108 @@
     const FILE_SIGNATURES = [
         // --- VIDEO ---
         // MKV / WebM (EBML header)
-        { ext: '.mkv',  cat: 'video',   match: b => b[0]===0x1A && b[1]===0x45 && b[2]===0xDF && b[3]===0xA3 },
+        { ext: '.mkv', cat: 'video', match: b => b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3 },
         // ASF / WMV / WMA
-        { ext: '.wmv',  cat: 'video',   match: b => b[0]===0x30 && b[1]===0x26 && b[2]===0xB2 && b[3]===0x75 && b[4]===0x8E && b[5]===0x66 && b[6]===0xCF && b[7]===0x11 },
+        { ext: '.wmv', cat: 'video', match: b => b[0] === 0x30 && b[1] === 0x26 && b[2] === 0xB2 && b[3] === 0x75 && b[4] === 0x8E && b[5] === 0x66 && b[6] === 0xCF && b[7] === 0x11 },
         // HEIC / HEIF – "ftyp" box at offset 4, brand "heic" at offset 8
-        { ext: '.heic', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x68 && b[9]===0x65 && b[10]===0x69 && b[11]===0x63 },
+        { ext: '.heic', cat: 'image', match: b => b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x68 && b[9] === 0x65 && b[10] === 0x69 && b[11] === 0x63 },
         // HEIF – "ftyp" box with "mif1" brand
-        { ext: '.heif', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x6D && b[9]===0x69 && b[10]===0x66 && b[11]===0x31 },
+        { ext: '.heif', cat: 'image', match: b => b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x6D && b[9] === 0x69 && b[10] === 0x66 && b[11] === 0x31 },
         // AVIF – "ftyp" box with "avif" brand
-        { ext: '.avif', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x61 && b[9]===0x76 && b[10]===0x69 && b[11]===0x66 },
+        { ext: '.avif', cat: 'image', match: b => b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x61 && b[9] === 0x76 && b[10] === 0x69 && b[11] === 0x66 },
         // 3GP – "ftyp" box with "3gp" brand at offset 8
-        { ext: '.3gp',  cat: 'video',   match: b => b.length >= 11 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x33 && b[9]===0x67 && b[10]===0x70 },
+        { ext: '.3gp', cat: 'video', match: b => b.length >= 11 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x33 && b[9] === 0x67 && b[10] === 0x70 },
         // M4A – "ftyp" box with "M4A " brand
-        { ext: '.m4a',  cat: 'audio',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x4D && b[9]===0x34 && b[10]===0x41 && b[11]===0x20 },
+        { ext: '.m4a', cat: 'audio', match: b => b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x4D && b[9] === 0x34 && b[10] === 0x41 && b[11] === 0x20 },
         // MPEG-4 / MOV / 3GP – "ftyp" box at byte offset 4
-        { ext: '.mp4',  cat: 'video',   match: b => b.length >= 8 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 },
+        { ext: '.mp4', cat: 'video', match: b => b.length >= 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 },
         // AVI  (RIFF....AVI )
-        { ext: '.avi',  cat: 'video',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x41 && b[9]===0x56 && b[10]===0x49 && b[11]===0x20 },
+        { ext: '.avi', cat: 'video', match: b => b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x41 && b[9] === 0x56 && b[10] === 0x49 && b[11] === 0x20 },
         // FLV
-        { ext: '.flv',  cat: 'video',   match: b => b[0]===0x46 && b[1]===0x4C && b[2]===0x56 },
+        { ext: '.flv', cat: 'video', match: b => b[0] === 0x46 && b[1] === 0x4C && b[2] === 0x56 },
         // MPEG Program/Transport Stream
-        { ext: '.mpg',  cat: 'video',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x01 && (b[3]===0xBA || b[3]===0xB3) },
+        { ext: '.mpg', cat: 'video', match: b => b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && (b[3] === 0xBA || b[3] === 0xB3) },
 
         // --- AUDIO ---
         // MP3 with ID3 tag
-        { ext: '.mp3',  cat: 'audio',   match: b => b[0]===0x49 && b[1]===0x44 && b[2]===0x33 },
+        { ext: '.mp3', cat: 'audio', match: b => b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33 },
         // MP3 raw frame sync
-        { ext: '.mp3',  cat: 'audio',   match: b => b[0]===0xFF && (b[1]===0xFB || b[1]===0xF3 || b[1]===0xF2) },
+        { ext: '.mp3', cat: 'audio', match: b => b[0] === 0xFF && (b[1] === 0xFB || b[1] === 0xF3 || b[1] === 0xF2) },
         // FLAC
-        { ext: '.flac', cat: 'audio',   match: b => b[0]===0x66 && b[1]===0x4C && b[2]===0x61 && b[3]===0x43 },
+        { ext: '.flac', cat: 'audio', match: b => b[0] === 0x66 && b[1] === 0x4C && b[2] === 0x61 && b[3] === 0x43 },
         // OGG / OGA / OGV
-        { ext: '.ogg',  cat: 'audio',   match: b => b[0]===0x4F && b[1]===0x67 && b[2]===0x67 && b[3]===0x53 },
+        { ext: '.ogg', cat: 'audio', match: b => b[0] === 0x4F && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53 },
         // WAV  (RIFF....WAVE)
-        { ext: '.wav',  cat: 'audio',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x57 && b[9]===0x41 && b[10]===0x56 && b[11]===0x45 },
+        { ext: '.wav', cat: 'audio', match: b => b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x41 && b[10] === 0x56 && b[11] === 0x45 },
         // MIDI
-        { ext: '.mid',  cat: 'audio',   match: b => b[0]===0x4D && b[1]===0x54 && b[2]===0x68 && b[3]===0x64 },
+        { ext: '.mid', cat: 'audio', match: b => b[0] === 0x4D && b[1] === 0x54 && b[2] === 0x68 && b[3] === 0x64 },
         // AAC (ADTS frame sync)
-        { ext: '.aac',  cat: 'audio',   match: b => b[0]===0xFF && (b[1]===0xF1 || b[1]===0xF9) },
+        { ext: '.aac', cat: 'audio', match: b => b[0] === 0xFF && (b[1] === 0xF1 || b[1] === 0xF9) },
 
         // --- IMAGE ---
         // PNG
-        { ext: '.png',  cat: 'image',   match: b => b[0]===0x89 && b[1]===0x50 && b[2]===0x4E && b[3]===0x47 && b[4]===0x0D && b[5]===0x0A && b[6]===0x1A && b[7]===0x0A },
+        { ext: '.png', cat: 'image', match: b => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 && b[4] === 0x0D && b[5] === 0x0A && b[6] === 0x1A && b[7] === 0x0A },
         // JPEG
-        { ext: '.jpg',  cat: 'image',   match: b => b[0]===0xFF && b[1]===0xD8 && b[2]===0xFF },
+        { ext: '.jpg', cat: 'image', match: b => b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF },
         // GIF
-        { ext: '.gif',  cat: 'image',   match: b => b[0]===0x47 && b[1]===0x49 && b[2]===0x46 && b[3]===0x38 },
+        { ext: '.gif', cat: 'image', match: b => b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38 },
         // WebP  (RIFF....WEBP)
-        { ext: '.webp', cat: 'image',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x57 && b[9]===0x45 && b[10]===0x42 && b[11]===0x50 },
+        { ext: '.webp', cat: 'image', match: b => b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 },
         // TIFF little-endian
-        { ext: '.tif',  cat: 'image',   match: b => b[0]===0x49 && b[1]===0x49 && b[2]===0x2A && b[3]===0x00 },
+        { ext: '.tif', cat: 'image', match: b => b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2A && b[3] === 0x00 },
         // TIFF big-endian
-        { ext: '.tif',  cat: 'image',   match: b => b[0]===0x4D && b[1]===0x4D && b[2]===0x00 && b[3]===0x2A },
+        { ext: '.tif', cat: 'image', match: b => b[0] === 0x4D && b[1] === 0x4D && b[2] === 0x00 && b[3] === 0x2A },
         // PSD
-        { ext: '.psd',  cat: 'image',   match: b => b[0]===0x38 && b[1]===0x42 && b[2]===0x50 && b[3]===0x53 },
+        { ext: '.psd', cat: 'image', match: b => b[0] === 0x38 && b[1] === 0x42 && b[2] === 0x50 && b[3] === 0x53 },
         // JPEG 2000
-        { ext: '.jp2',  cat: 'image',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x00 && b[3]===0x0C && b[4]===0x6A && b[5]===0x50 },
+        { ext: '.jp2', cat: 'image', match: b => b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x00 && b[3] === 0x0C && b[4] === 0x6A && b[5] === 0x50 },
         // BMP
-        { ext: '.bmp',  cat: 'image',   match: b => b[0]===0x42 && b[1]===0x4D },
+        { ext: '.bmp', cat: 'image', match: b => b[0] === 0x42 && b[1] === 0x4D },
         // ICO (Windows icon)
-        { ext: '.ico',  cat: 'image',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x01 && b[3]===0x00 },
+        { ext: '.ico', cat: 'image', match: b => b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && b[3] === 0x00 },
 
         // --- ARCHIVE ---
         // ZIP  (also DOCX, XLSX, EPUB, JAR, APK, etc.)
-        { ext: '.zip',  cat: 'archive', match: b => b[0]===0x50 && b[1]===0x4B && (b[2]===0x03 || b[2]===0x05 || b[2]===0x07) },
+        { ext: '.zip', cat: 'archive', match: b => b[0] === 0x50 && b[1] === 0x4B && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07) },
         // RAR v1.5+
-        { ext: '.rar',  cat: 'archive', match: b => b[0]===0x52 && b[1]===0x61 && b[2]===0x72 && b[3]===0x21 && b[4]===0x1A && b[5]===0x07 },
+        { ext: '.rar', cat: 'archive', match: b => b[0] === 0x52 && b[1] === 0x61 && b[2] === 0x72 && b[3] === 0x21 && b[4] === 0x1A && b[5] === 0x07 },
         // 7-Zip
-        { ext: '.7z',   cat: 'archive', match: b => b[0]===0x37 && b[1]===0x7A && b[2]===0xBC && b[3]===0xAF && b[4]===0x27 && b[5]===0x1C },
+        { ext: '.7z', cat: 'archive', match: b => b[0] === 0x37 && b[1] === 0x7A && b[2] === 0xBC && b[3] === 0xAF && b[4] === 0x27 && b[5] === 0x1C },
         // GZIP
-        { ext: '.gz',   cat: 'archive', match: b => b[0]===0x1F && b[1]===0x8B },
+        { ext: '.gz', cat: 'archive', match: b => b[0] === 0x1F && b[1] === 0x8B },
         // BZIP2
-        { ext: '.bz2',  cat: 'archive', match: b => b[0]===0x42 && b[1]===0x5A && b[2]===0x68 },
+        { ext: '.bz2', cat: 'archive', match: b => b[0] === 0x42 && b[1] === 0x5A && b[2] === 0x68 },
         // XZ
-        { ext: '.xz',   cat: 'archive', match: b => b[0]===0xFD && b[1]===0x37 && b[2]===0x7A && b[3]===0x58 && b[4]===0x5A && b[5]===0x00 },
+        { ext: '.xz', cat: 'archive', match: b => b[0] === 0xFD && b[1] === 0x37 && b[2] === 0x7A && b[3] === 0x58 && b[4] === 0x5A && b[5] === 0x00 },
         // LZ4
-        { ext: '.lz4',  cat: 'archive', match: b => b[0]===0x04 && b[1]===0x22 && b[2]===0x4D && b[3]===0x18 },
+        { ext: '.lz4', cat: 'archive', match: b => b[0] === 0x04 && b[1] === 0x22 && b[2] === 0x4D && b[3] === 0x18 },
         // Zstandard
-        { ext: '.zst',  cat: 'archive', match: b => b[0]===0x28 && b[1]===0xB5 && b[2]===0x2F && b[3]===0xFD },
+        { ext: '.zst', cat: 'archive', match: b => b[0] === 0x28 && b[1] === 0xB5 && b[2] === 0x2F && b[3] === 0xFD },
         // Microsoft Cabinet
-        { ext: '.cab',  cat: 'archive', match: b => b[0]===0x4D && b[1]===0x53 && b[2]===0x43 && b[3]===0x46 },
+        { ext: '.cab', cat: 'archive', match: b => b[0] === 0x4D && b[1] === 0x53 && b[2] === 0x43 && b[3] === 0x46 },
 
         // --- DOCUMENT ---
         // OLE2 Compound File  (DOC / XLS / PPT / MSG / MSI)
-        { ext: '.doc',  cat: 'document', match: b => b[0]===0xD0 && b[1]===0xCF && b[2]===0x11 && b[3]===0xE0 && b[4]===0xA1 && b[5]===0xB1 && b[6]===0x1A && b[7]===0xE1 },
+        { ext: '.doc', cat: 'document', match: b => b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0 && b[4] === 0xA1 && b[5] === 0xB1 && b[6] === 0x1A && b[7] === 0xE1 },
         // RTF
-        { ext: '.rtf',  cat: 'document', match: b => b[0]===0x7B && b[1]===0x5C && b[2]===0x72 && b[3]===0x74 && b[4]===0x66 },
+        { ext: '.rtf', cat: 'document', match: b => b[0] === 0x7B && b[1] === 0x5C && b[2] === 0x72 && b[3] === 0x74 && b[4] === 0x66 },
 
         // --- FORENSIC ---
         // EnCase EWF v1
-        { ext: '.e01',    cat: 'forensic', match: b => b[0]===0x45 && b[1]===0x56 && b[2]===0x46 },
+        { ext: '.e01', cat: 'forensic', match: b => b[0] === 0x45 && b[1] === 0x56 && b[2] === 0x46 },
         // PCAP (LE & BE)
-        { ext: '.pcap',   cat: 'forensic', match: b => (b[0]===0xD4 && b[1]===0xC3 && b[2]===0xB2 && b[3]===0xA1) || (b[0]===0xA1 && b[1]===0xB2 && b[2]===0xC3 && b[3]===0xD4) },
+        { ext: '.pcap', cat: 'forensic', match: b => (b[0] === 0xD4 && b[1] === 0xC3 && b[2] === 0xB2 && b[3] === 0xA1) || (b[0] === 0xA1 && b[1] === 0xB2 && b[2] === 0xC3 && b[3] === 0xD4) },
         // PCAP-NG
-        { ext: '.pcapng', cat: 'forensic', match: b => b[0]===0x0A && b[1]===0x0D && b[2]===0x0D && b[3]===0x0A },
+        { ext: '.pcapng', cat: 'forensic', match: b => b[0] === 0x0A && b[1] === 0x0D && b[2] === 0x0D && b[3] === 0x0A },
         // SQLite
-        { ext: '.db',     cat: 'forensic', match: b => b[0]===0x53 && b[1]===0x51 && b[2]===0x4C && b[3]===0x69 && b[4]===0x74 && b[5]===0x65 && b[6]===0x20 },
+        { ext: '.db', cat: 'forensic', match: b => b[0] === 0x53 && b[1] === 0x51 && b[2] === 0x4C && b[3] === 0x69 && b[4] === 0x74 && b[5] === 0x65 && b[6] === 0x20 },
     ];
 
     // Match a Uint8Array against the signatures table, return first hit or null.
     function detectFileTypeFromMagicBytes(bytes) {
         if (!bytes || bytes.length < 4) return null;
         for (const sig of FILE_SIGNATURES) {
-            try { if (sig.match(bytes)) return sig; } catch (_) {}
+            try { if (sig.match(bytes)) return sig; } catch (_) { }
         }
         return null;
     }
@@ -442,7 +444,7 @@
                     reader.cancel(); // Stop downloading the rest immediately
                 }
                 const bytes = result.subarray(0, filled);
-                console.debug(`fetchMagicBytes: got ${filled} bytes from ${url.split('/').pop()} | hex: ${Array.from(bytes.subarray(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`);
+                console.debug(`fetchMagicBytes: got ${filled} bytes from ${url.split('/').pop()} | hex: ${Array.from(bytes.subarray(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
                 return bytes;
             }
             console.debug(`fetchMagicBytes: status ${response.status} for ${url.split('/').pop()}`);
@@ -471,8 +473,27 @@
             // %PDF- magic bytes (25 50 44 46) — no extension probing needed.
             if (pdfBytes[0] === 0x25 && pdfBytes[1] === 0x50 && pdfBytes[2] === 0x44 && pdfBytes[3] === 0x46) {
                 console.log(`Confirmed real PDF via magic bytes: ${pdfUrl.split('/').pop()}`);
-                return { success: true, url: pdfUrl, size: null, type: 'document/pdf',
-                    extension: '.pdf', category: 'document', confirmedPdf: true };
+                return {
+                    success: true, url: pdfUrl, size: null, type: 'document/pdf',
+                    extension: '.pdf', category: 'document', confirmedPdf: true
+                };
+            }
+
+            // Check for HTML response (Access Denied / 404 Page)
+            // Common starting bytes for HTML:
+            // 3C 21 44 4F 43 54 59 50 45 (<!DOCTYPE)
+            // 3C 68 74 6D 6C (<html)
+            // 3C 48 54 4D 4C (<HTML)
+            const isHtml = (pdfBytes[0] === 0x3C && pdfBytes[1] === 0x21) || // <!
+                (pdfBytes[0] === 0x3C && (pdfBytes[1] === 0x68 || pdfBytes[1] === 0x48)); // <h or <H
+
+            if (isHtml) {
+                console.warn(`Server returned HTML page (Access Denied / 404) for: ${pdfUrl.split('/').pop()}`);
+                // Verify if it's an age verification page or generic error
+                const decoder = new TextDecoder('utf-8');
+                const textPreview = decoder.decode(pdfBytes).substring(0, 60).replace(/\n/g, ' ');
+                console.warn(`HTML Preview: ${textPreview}...`);
+                return null; // Stop processing this URL
             }
 
             const sig = detectFileTypeFromMagicBytes(pdfBytes);
@@ -482,40 +503,56 @@
                 const confirmed = await testFileUrl(pdfUrl, sig.ext);
                 if (confirmed.success) return confirmed;
                 // Fallback: original URL already serves the right content.
-                return { success: true, url: pdfUrl, size: pdfBytes.length,
-                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat };
+                return {
+                    success: true, url: pdfUrl, size: pdfBytes.length,
+                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat
+                };
             }
             // Log the first bytes so the developer can see what we're getting
             const hex = Array.from(pdfBytes.subarray(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
             console.debug(`Signature MISS on .pdf URL (${pdfUrl.split('/').pop()}): first bytes = ${hex}`);
         }
 
-        // Step 2: probe top-priority candidate extension URLs directly.
+        // Step 2: probe candidate extensions from the user's enabled list.
         // The .pdf URL is a real PDF; the non-PDF version lives at a different URL.
-        const PROBE_CANDIDATES = [
-            '.mp4', '.mov', '.avi', '.wmv', '.mkv', '.webm',   // video
-            '.mp3', '.wav', '.flac', '.m4a',                    // audio
-            '.jpg', '.png', '.gif',                             // image
-            '.zip', '.rar', '.7z',                              // archive
-        ];
-        for (const ext of PROBE_CANDIDATES) {
-            if (!CONFIG.ENABLED_TYPES[getFileCategory(ext)] || CONFIG.ENABLED_EXTENSIONS[ext] === false) continue;
+        const candidates = ALL_EXTENSIONS.filter(ext => {
+            const cat = getFileCategory(ext);
+            // Only include extensions that are explicitly enabled in settings
+            return CONFIG.ENABLED_TYPES[cat] && CONFIG.ENABLED_EXTENSIONS[ext] !== false;
+        });
+
+        // Use a randomized or ordered list based on config (optional, but good for distribution)
+        const probeList = CONFIG.RANDOMIZE_ORDER ? shuffleArray(candidates) : candidates;
+
+        console.log(`Probing ${probeList.length} candidate extensions for ${pdfUrl.split('/').pop()}...`);
+
+        for (const ext of probeList) {
             const candidateBytes = await fetchMagicBytes(
                 (() => { try { const u = new URL(pdfUrl); u.pathname = u.pathname.replace(/\.pdf$/i, ext); return u.toString(); } catch (_) { return pdfUrl.replace(/\.pdf$/i, ext); } })()
             );
+
+            // If fetch failed or returned HTML, skip
             if (!candidateBytes) continue;
+            // HTML check for candidates too
+            if ((candidateBytes[0] === 0x3C && candidateBytes[1] === 0x21) ||
+                (candidateBytes[0] === 0x3C && (candidateBytes[1] === 0x68 || candidateBytes[1] === 0x48))) {
+                continue;
+            }
+
             const sig = detectFileTypeFromMagicBytes(candidateBytes);
             if (sig) {
                 console.log(`Signature HIT on candidate ${ext}: confirmed as ${sig.ext} (${sig.cat})`);
                 const candidateUrl = (() => { try { const u = new URL(pdfUrl); u.pathname = u.pathname.replace(/\.pdf$/i, sig.ext); return u.toString(); } catch (_) { return pdfUrl.replace(/\.pdf$/i, sig.ext); } })();
                 const confirmed = await testFileUrl(pdfUrl, sig.ext);
                 if (confirmed.success) return confirmed;
-                return { success: true, url: candidateUrl, size: candidateBytes.length,
-                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat };
+                return {
+                    success: true, url: candidateUrl, size: candidateBytes.length,
+                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat
+                };
             }
         }
 
-        return null; // Trigger extension loop fallback
+        return null; // All probes failed
     }
 
     // Initialize Config with Extensions
@@ -1904,6 +1941,14 @@
                             <label class="doj-input-label">📦 Batch Download Size</label>
                             <input type="number" class="doj-input" id="doj-set-batch-size" value="${CONFIG.BATCH_SIZE || 25}" step="1" min="1" max="1000">
                         </div>
+                        <div class="doj-input-group">
+                            <label class="doj-input-label">🛑 Safety Batch Limit (Download All)</label>
+                            <input type="number" class="doj-input" id="doj-set-safety-limit" value="${CONFIG.SAFETY_BATCH_LIMIT || 100}" step="10" min="10">
+                        </div>
+                        <div class="doj-input-group">
+                            <label class="doj-input-label">💾 Max Blob Size (MB) - RAM Dependent</label>
+                            <input type="number" class="doj-input" id="doj-set-blob-limit" value="${CONFIG.MAX_BLOB_SIZE_MB || 500}" step="50" min="50">
+                        </div>
                     </div>
 
                     <div style="margin: 20px 0 12px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
@@ -1936,6 +1981,8 @@
             CONFIG.AUTO_CRAWL_DELAY = parseInt(document.getElementById('doj-set-crawl-delay').value) || 2000;
             CONFIG.PAGE_LOAD_DELAY = parseInt(document.getElementById('doj-set-page-delay').value) || 1000;
             CONFIG.BATCH_SIZE = parseInt(document.getElementById('doj-set-batch-size').value) || 25;
+            CONFIG.SAFETY_BATCH_LIMIT = parseInt(document.getElementById('doj-set-safety-limit').value) || 100;
+            CONFIG.MAX_BLOB_SIZE_MB = parseInt(document.getElementById('doj-set-blob-limit').value) || 500;
             CONFIG.USE_STEALTH_MODE = document.getElementById('doj-set-stealth').checked;
             CONFIG.RANDOMIZE_ORDER = document.getElementById('doj-set-randomize').checked;
             CONFIG.MAX_CONCURRENT = parseInt(document.getElementById('doj-set-concurrent').value) || 1;
@@ -2062,6 +2109,8 @@
         document.getElementById('doj-set-crawl-delay').value = CONFIG.AUTO_CRAWL_DELAY || 2000;
         document.getElementById('doj-set-page-delay').value = CONFIG.PAGE_LOAD_DELAY || 1000;
         document.getElementById('doj-set-batch-size').value = CONFIG.BATCH_SIZE || 25;
+        document.getElementById('doj-set-blob-limit').value = CONFIG.MAX_BLOB_SIZE_MB || 500;
+        document.getElementById('doj-set-safety-limit').value = CONFIG.SAFETY_BATCH_LIMIT || 100;
         document.getElementById('doj-set-stealth').checked = CONFIG.USE_STEALTH_MODE !== false; // Default true
         document.getElementById('doj-set-randomize').checked = CONFIG.RANDOMIZE_ORDER !== false; // Default true
 
@@ -2350,10 +2399,11 @@
         const url = fileData.url;
         const headers = CONFIG.USE_STEALTH_MODE ? getRealisticHeaders(url) : {};
 
-        // MEMORY SAFEGUARD: Block Blobs > 500MB
-        if (fileData.size && fileData.size > 500 * 1024 * 1024) {
-            console.error(`BLOCKED Large Blob Download: ${filename} is ${(fileData.size / 1024 / 1024).toFixed(1)}MB. Browser will crash.`);
-            alert(`⚠️ MEMORY SAFEGUARD\n\nThis file is too large (${(fileData.size / 1024 / 1024).toFixed(1)}MB) for the browser's internal downloader.\n\nPlease use a separate download manager (IDM, JDownloader) for this file.\n\nOpening direct link...`);
+        // MEMORY SAFEGUARD: Block Blobs > Configured Limit
+        const maxBytes = (CONFIG.MAX_BLOB_SIZE_MB || 500) * 1024 * 1024;
+        if (fileData.size && fileData.size > maxBytes) {
+            console.error(`BLOCKED Large Blob Download: ${filename} is ${(fileData.size / 1024 / 1024).toFixed(1)}MB (Limit: ${CONFIG.MAX_BLOB_SIZE_MB}MB).`);
+            alert(`⚠️ MEMORY SAFEGUARD\n\nThis file (${(fileData.size / 1024 / 1024).toFixed(1)}MB) exceeds your configured Blob limit of ${CONFIG.MAX_BLOB_SIZE_MB}MB.\n\nOpening direct link instead...`);
             downloadDirect(fileData, filename);
             return;
         }
@@ -2461,8 +2511,8 @@
             return;
         }
 
-        // SAFETY LIMIT: Cap "Extract All" at 100 to prevent browser crash
-        const MAX_SAFE_LIMIT = 100;
+        // SAFETY LIMIT: Cap "Extract All" to prevent browser crash (Configurable)
+        const MAX_SAFE_LIMIT = CONFIG.SAFETY_BATCH_LIMIT || 100;
         let filesToDownload = safePending;
 
         let skipMsg = '';
@@ -2471,7 +2521,7 @@
         }
 
         if (safePending.length > MAX_SAFE_LIMIT) {
-            if (!confirm(`⚠️ BROWSER SAFETY LIMIT\n\nYou are attempting to download ${safePending.length} files at once.\nTo prevent your browser from freezing, "Extract All" is capped at ${MAX_SAFE_LIMIT} files.${skipMsg}\n\nClick OK to download the first ${MAX_SAFE_LIMIT} files.\n(To download more, use the "BATCH" button with a custom size in Settings)`)) {
+            if (!confirm(`⚠️ BROWSER SAFETY WARNING\n\nYou are attempting to download ${safePending.length} files at once.\nYour configured safety limit is ${MAX_SAFE_LIMIT}.\n\nClick OK to download the first ${MAX_SAFE_LIMIT} files.\n(To download more, increase the limit in Settings or use Batch mode)`)) {
                 return;
             }
             filesToDownload = safePending.slice(0, MAX_SAFE_LIMIT);
@@ -2852,8 +2902,8 @@
                     console.warn(`Large file detected: ${fileUrl} (${(contentLength / 1024 / 1024).toFixed(2)} MB). Marking as unstable.`);
                 }
 
-                // Lowered thresholds: DOJ evidence files can be very short clips
-                const minSize = ['video', 'archive'].includes(category) ? 5000 : 2000;
+                // Lowered thresholds: DOJ evidence files can be very short clips or small log files
+                const minSize = 100; // Virtually zero, just ensuring it's not empty
 
                 // Enhanced Content-Type Validation
                 // Only accept if content-type matches expected category OR is a binary stream
@@ -2865,14 +2915,50 @@
                     (contentType.includes('application') && !contentType.includes('pdf') && !contentType.includes('html')); // Exclude PDF/HTML applications
 
                 if ((contentLength > minSize && isValidType) || (contentLength > minSize && contentType === 'application/octet-stream')) {
+
+                    // ---------------------------------------------------------
+                    // STRICT SIGNATURE VERIFICATION (User Request)
+                    // ---------------------------------------------------------
+                    let finalExtension = extension;
+                    try {
+                        // Clone the response to read body without consuming the original (if needed elsewhere)
+                        // Actually, we can just read it since we don't return the stream
+                        const buffer = await response.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+
+                        // Check against known signatures
+                        const sig = detectFileTypeFromMagicBytes(bytes);
+
+                        if (sig) {
+                            console.log(`[Signature Verify] ${extension} -> Confirmed as ${sig.ext} (${sig.cat})`);
+
+                            // If extension mismatch, correct it!
+                            if (sig.ext !== extension) {
+                                console.warn(`Type Mismatch: URL has ${extension}, Magic Bytes say ${sig.ext}. Updating...`);
+                                finalExtension = sig.ext;
+                            }
+                        } else {
+                            // No signature found. 
+                            // If it's a known binary type (like AVI) but has no signature, it's suspicious.
+                            // But could be an obscure variant or a text file (logs, xml, etc).
+                            if (['.avi', '.mp4', '.mkv', '.zip', '.pdf', '.jpg', '.png'].includes(extension)) {
+                                console.warn(`[Signature Verify] WARNING: No known signature found for ${extension} file. Possible corruption or false positive.`);
+                            } else {
+                                console.log(`[Signature Verify] No signature match for ${extension} (might be text/unknown). Accepting based on Content-Type.`);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Error reading magic bytes during verification:', err);
+                    }
+
                     return {
                         success: true,
                         url: fileUrl,
                         size: contentLength,
-                        type: contentType,
-                        extension: extension,
-                        category: category,
-                        isTooLarge: isTooLarge
+                        type: contentType || 'application/octet-stream',
+                        extension: finalExtension,
+                        category: getFileCategory(finalExtension),
+                        timestamp: Date.now()
                     };
                 } else {
                     console.warn(`Rejected candidate: ${fileUrl} | Size: ${contentLength} | Type: ${contentType} | ValidType: ${isValidType}`);
