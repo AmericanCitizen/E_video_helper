@@ -1,4 +1,4 @@
-// ==UserScript==
+;// ==UserScript==
 // @name         Epstein File Sniper
 // @namespace    http://tampermonkey.net/
 // @version      3.0
@@ -75,7 +75,8 @@
         },
         // Start empty, will populate
         ENABLED_EXTENSIONS: {},
-        AUTO_RENAME_DOWNLOADS: true  // Rename downloaded files based on detected magic-number type
+        AUTO_RENAME_DOWNLOADS: true,  // Rename downloaded files based on detected magic-number type
+        PRIORITIZE_MEDIA: false       // If true, ignores found PDFs in Phase 1 and forces deep scan for videos
     };
 
     let CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
@@ -238,7 +239,7 @@
         audio: ['.mp3', '.wav', '.m4a', '.flac', '.aac'],
         image: ['.jpg', '.png', '.gif', '.webp', '.jpeg'],
         archive: ['.zip', '.rar', '.7z', '.tar', '.gz'],
-        document: ['.doc', '.docx', '.xls', '.xlsx', '.pdf'],
+        document: ['.doc', '.docx', '.xls', '.xlsx'],
         forensic: ['.E01', '.dd', '.zip', '.iso', '.img']
     };
 
@@ -472,11 +473,20 @@
             // Early exit: if the .pdf URL genuinely serves PDF content, stop immediately.
             // %PDF- magic bytes (25 50 44 46) — no extension probing needed.
             if (pdfBytes[0] === 0x25 && pdfBytes[1] === 0x50 && pdfBytes[2] === 0x44 && pdfBytes[3] === 0x46) {
-                console.log(`Confirmed real PDF via magic bytes: ${pdfUrl.split('/').pop()}`);
-                return {
-                    success: true, url: pdfUrl, size: null, type: 'document/pdf',
-                    extension: '.pdf', category: 'document', confirmedPdf: true
-                };
+                // Check if PDF scan is enabled. If disabled, ignore the PDF and probe for other extensions.
+                const isPdfEnabled = CONFIG.ENABLED_TYPES.document !== false && CONFIG.ENABLED_EXTENSIONS['.pdf'] !== false;
+
+                if (isPdfEnabled) {
+                    console.log(`Confirmed real PDF via magic bytes: ${pdfUrl.split('/').pop()}`);
+                    setStatus && setStatus(`Signature Verified: PDF (${pdfUrl.split('/').pop()})`, 'success');
+                    return {
+                        success: true, url: pdfUrl, size: null, type: 'document/pdf',
+                        extension: '.pdf', category: 'document', confirmedPdf: true
+                    };
+                } else {
+                    console.log(`Ignored real PDF (disabled in config): ${pdfUrl.split('/').pop()}`);
+                    // Fall through -> will probe candidates in Step 2
+                }
             }
 
             // Check for HTML response (Access Denied / 404 Page)
@@ -541,6 +551,12 @@
 
             const sig = detectFileTypeFromMagicBytes(candidateBytes);
             if (sig) {
+                // SOFT 404 CHECK: If we asked for .avi/.zip etc and got a .pdf back, REJECT it.
+                if (sig.ext === '.pdf' && ext !== '.pdf') {
+                    console.warn(`[Snipe Probe] Soft 404: Probed ${ext}, got PDF signature. Skipping.`);
+                    continue;
+                }
+
                 console.log(`Signature HIT on candidate ${ext}: confirmed as ${sig.ext} (${sig.cat})`);
                 const candidateUrl = (() => { try { const u = new URL(pdfUrl); u.pathname = u.pathname.replace(/\.pdf$/i, sig.ext); return u.toString(); } catch (_) { return pdfUrl.replace(/\.pdf$/i, sig.ext); } })();
                 const confirmed = await testFileUrl(pdfUrl, sig.ext);
@@ -580,14 +596,7 @@
                 ALL_EXTENSIONS.forEach(ext => {
                     if (CONFIG.ENABLED_EXTENSIONS[ext] === undefined) CONFIG.ENABLED_EXTENSIONS[ext] = true;
                 });
-                // AUTO-MIGRATE OLD DEFAULTS (Fix for user stuck on 2s/5s)
-                if (parsed.DELAY_MIN > 1000 || parsed.DELAY_MAX > 3000) {
-                    console.log('Force-migrating slow config to fast defaults...');
-                    CONFIG.DELAY_MIN = 500;
-                    CONFIG.DELAY_MAX = 1500;
-                    CONFIG.BASE_JITTER = 200;
-                    saveConfig();
-                }
+
             } catch (e) {
                 console.error('Failed to load config', e);
             }
@@ -1337,11 +1346,7 @@
             cursor: pointer;
             transition: color 0.2s;
         }
-        .doj-settings-close:hover {
-            color: var(--cin-red-bright);
-        }
-
-        .doj-media-header {
+        .doj-modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -1349,13 +1354,15 @@
             border-bottom: 1px solid #222;
         }
 
-        .doj-media-title {
+        .doj-modal-title {
             color: var(--cin-gold);
             font-family: 'Playfair Display', serif;
             font-size: 16px;
             font-weight: 700;
             margin: 0;
         }
+
+
 
         .doj-ext-grid {
             display: grid;
@@ -1504,6 +1511,16 @@
                      <button class="doj-btn" id="doj-clear-secured" style="font-size:10px; padding:4px 8px; background:rgba(255,255,255,0.1);">Clear List</button>
                 </div>
 
+                <!-- Found/Locked Tab Actions -->
+                <div id="doj-tab-actions-found" style="display:none; margin-bottom:10px; justify-content:flex-end; gap: 8px;">
+                     <button class="doj-btn" id="doj-rescan-found" style="font-size:10px; padding:4px 8px; background:rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3);">Rescan All Found</button>
+                </div>
+
+                <!-- Failed/Missed Tab Actions -->
+                <div id="doj-tab-actions-failed" style="display:none; margin-bottom:10px; justify-content:flex-end; gap: 8px;">
+                     <button class="doj-btn" id="doj-retry-failed" style="font-size:10px; padding:4px 8px; background:rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">Retry All Failed</button>
+                </div>
+
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 11px; color: #eab308; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Extraction Parameters</div>
                     <div id="doj-type-toggles"></div>
@@ -1513,7 +1530,7 @@
                     <button class="doj-btn doj-btn-primary" id="doj-scan" style="flex: 1;">
                         <span>🎯</span> Take Shot
                     </button>
-                    <button class="doj-btn" id="doj-force-rescan" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; flex: 0 0 auto; padding: 0 12px;" title="Reset all files and re-scan everything from scratch">
+                    <button class="doj-btn" id="doj-rescan-all" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; flex: 0 0 auto; padding: 0 12px;" title="Reset all files and re-scan everything from scratch">
                         🔄
                     </button>
                     <button class="doj-btn" id="doj-auto-crawl" style="background: #1e40af; flex: 1;">
@@ -1633,6 +1650,70 @@
             container.style.display = 'none';
         }
 
+        document.getElementById('doj-rescan-all').onclick = () => {
+            const stats = StateManager.getStats();
+            const count = stats.found + stats.failed + stats.downloaded;
+
+            if (count === 0) {
+                alert('No files to re-scan.');
+                return;
+            }
+
+            if (confirm(`Reset ${count} files (Locked, Missed, Extracted) back to "Spotted" and re-run scan?`)) {
+                const allFiles = StateManager.getFiles();
+                allFiles.forEach(f => {
+                    f.status = 'detected';
+                    if (f.originalUrl) f.url = f.originalUrl;
+                    delete f.confirmedPdf;
+                });
+                resolvedLinks.clear();
+                StateManager.saveState();
+                renderFileList();
+                scanCurrentPage();
+            }
+        }
+
+        document.getElementById('doj-rescan-found').onclick = () => {
+            const allFiles = StateManager.getFiles();
+            const foundFiles = allFiles.filter(f => f.status === 'found');
+            if (foundFiles.length === 0) {
+                alert('No "Locked" files to rescan.');
+                return;
+            }
+
+            if (confirm(`Reset ${foundFiles.length} "Locked" files back to "Spotted" and re-run deep scan?`)) {
+                foundFiles.forEach(f => {
+                    f.status = 'detected';
+                    if (f.originalUrl) f.url = f.originalUrl;
+                    delete f.confirmedPdf;
+                });
+                // Remove from resolved links to allow re-scoping
+                foundFiles.forEach(f => {
+                    resolvedLinks.delete(getFilenameStem(f.url));
+                    if (f.originalUrl) resolvedLinks.delete(getFilenameStem(f.originalUrl));
+                });
+                StateManager.saveState();
+                renderFileList();
+                scanCurrentPage(false); // Run a normal scan which picks up detected
+            }
+        }
+
+        document.getElementById('doj-retry-failed').onclick = () => {
+            const allFiles = StateManager.getFiles();
+            const failedFiles = allFiles.filter(f => f.status === 'failed');
+            if (failedFiles.length === 0) {
+                alert('No "Missed" files to retry.');
+                return;
+            }
+
+            if (confirm(`Reset ${failedFiles.length} "Missed" files back to "Spotted" and retry?`)) {
+                failedFiles.forEach(f => f.status = 'detected');
+                StateManager.saveState();
+                renderFileList();
+                scanCurrentPage(false);
+            }
+        }
+
         document.getElementById('doj-settings-btn').onclick = () => {
             openSettingsModal();
         }
@@ -1645,11 +1726,7 @@
             scanCurrentPage(false);
         };
 
-        document.getElementById('doj-force-rescan').onclick = () => {
-            if (confirm('Force Rescan will reset ALL detected/failed files and re-check everything.\nThis makes many more network requests. Continue?')) {
-                scanCurrentPage(true);
-            }
-        };
+
 
         // Minimize Logic
         const minBtn = document.getElementById('doj-minimize');
@@ -1748,6 +1825,15 @@
 
                 // Update State
                 activeTab = tab.getAttribute('data-tab');
+
+                // Update UI based on tab
+                const actionsFound = container.querySelector('#doj-tab-actions-found');
+                const actionsFailed = container.querySelector('#doj-tab-actions-failed');
+                const actionsDownloaded = container.querySelector('#doj-tab-actions-downloaded');
+
+                if (actionsFound) actionsFound.style.display = (activeTab === 'found') ? 'flex' : 'none';
+                if (actionsFailed) actionsFailed.style.display = (activeTab === 'failed') ? 'flex' : 'none';
+                if (actionsDownloaded) actionsDownloaded.style.display = (activeTab === 'downloaded') ? 'flex' : 'none';
 
                 // Re-render
                 renderFileList();
@@ -1868,8 +1954,8 @@
         });
         modal.innerHTML = `
     <div class="doj-settings-content">
-                <div class="doj-media-header">
-                    <h3 class="doj-media-title">⚙️ Advanced Settings</h3>
+                <div class="doj-modal-header">
+                    <h3 class="doj-modal-title">⚙️ Advanced Settings</h3>
                     <button class="doj-settings-close" id="doj-settings-close">×</button>
                 </div>
                 <div class="doj-settings-body">
@@ -1893,6 +1979,17 @@
                         </span>
                         <label class="doj-switch">
                             <input type="checkbox" id="doj-set-randomize" ${CONFIG.RANDOMIZE_ORDER ? 'checked' : ''}>
+                            <span class="doj-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="doj-toggle" style="margin-bottom: 12px;">
+                        <span class="doj-toggle-label">
+                            <div style="color:var(--cin-gold);">🎬 Prioritize Media (Deep Scan)</div>
+                            <div class="doj-toggle-sub">If a PDF is found, IGNORE it and keep scanning for hidden video/audio files. (Slower)</div>
+                        </span>
+                        <label class="doj-switch">
+                            <input type="checkbox" id="doj-set-prioritize" ${CONFIG.PRIORITIZE_MEDIA ? 'checked' : ''}>
                             <span class="doj-slider"></span>
                         </label>
                     </div>
@@ -1959,6 +2056,18 @@
                             <input type="file" id="doj-import-input" style="display:none" accept=".json">
                         </div>
                     </div>
+
+                    <div style="margin: 20px 0 12px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                        <div style="font-size:11px; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:12px; font-weight:600;">Problem Resolution</div>
+                        <div style="display:flex; gap:10px;">
+                            <button class="doj-btn" id="doj-rescan-pdfs" style="background: #ef4444; width: 100%;">
+                                ⚠️ Rescan All Found PDFs (Fix Soft 404s)
+                            </button>
+                        </div>
+                        <div style="font-size:10px; color:rgba(255,255,255,0.5); margin-top:6px;">
+                            Use this if you have files incorrectly identified as PDFs. It will reset them so they can be re-checked.
+                        </div>
+                    </div>
                 </div>
                 <div style="padding-top:16px; display:flex; gap:10px;">
                      <button class="doj-btn doj-btn-primary" id="doj-settings-save">Save Settings</button>
@@ -1985,6 +2094,7 @@
             CONFIG.MAX_BLOB_SIZE_MB = parseInt(document.getElementById('doj-set-blob-limit').value) || 500;
             CONFIG.USE_STEALTH_MODE = document.getElementById('doj-set-stealth').checked;
             CONFIG.RANDOMIZE_ORDER = document.getElementById('doj-set-randomize').checked;
+            CONFIG.PRIORITIZE_MEDIA = document.getElementById('doj-set-prioritize').checked;
             CONFIG.MAX_CONCURRENT = parseInt(document.getElementById('doj-set-concurrent').value) || 1;
             saveConfig();
             updateStats(); // Refresh batch button label
@@ -2019,6 +2129,39 @@
     function openSettingsModal() {
         let modal = document.getElementById('doj-settings-modal');
         if (!modal) modal = createSettingsModal();
+
+        // Re-attach listener for rescan button (safe to do since we just created or retrieved modal)
+        const rescanBtn = document.getElementById('doj-rescan-pdfs');
+        if (rescanBtn) {
+            rescanBtn.onclick = () => {
+                if (confirm('This will RESET all found PDF files to "Pending" so they can be re-scanned.\n\nUse this to fix files that were incorrectly identified as PDFs.\n\nContinue?')) {
+                    const allFiles = StateManager.getFiles();
+                    let count = 0;
+                    allFiles.forEach(f => {
+                        // Target only FOUND files that are marked as PDF
+                        if (f.status === 'found' && f.extension === '.pdf') {
+                            f.status = 'detected';
+                            // Clear resolved links for these stems so scanner picks them up
+                            const stem = getFilenameStem(f.url);
+                            resolvedLinks.delete(stem);
+                            if (f.originalUrl) resolvedLinks.delete(getFilenameStem(f.originalUrl));
+                            count++;
+                        }
+                    });
+
+                    if (count > 0) {
+                        StateManager.saveState();
+                        renderFileList();
+                        updateStats();
+                        alert(`Successfully reset ${count} PDF files.\n\nPlease click "Scan Page" to re-check them with the new strict validation.`);
+                        modal.classList.remove('active');
+                        setTimeout(() => modal.style.display = 'none', 300);
+                    } else {
+                        alert('No "Found" PDF files were found to reset.');
+                    }
+                }
+            };
+        }
 
         // Populate Granular Extensions
         const container = document.getElementById('doj-settings-exts');
@@ -2113,6 +2256,7 @@
         document.getElementById('doj-set-safety-limit').value = CONFIG.SAFETY_BATCH_LIMIT || 100;
         document.getElementById('doj-set-stealth').checked = CONFIG.USE_STEALTH_MODE !== false; // Default true
         document.getElementById('doj-set-randomize').checked = CONFIG.RANDOMIZE_ORDER !== false; // Default true
+        document.getElementById('doj-set-prioritize').checked = CONFIG.PRIORITIZE_MEDIA === true; // Default false
 
         modal.style.display = 'flex';
         // force reflow
@@ -2120,9 +2264,7 @@
         modal.classList.add('active');
     }
 
-    // Video Center REMOVED logic cleaned up
-    // ... logic cleaned up
-    // ...
+
 
     // Get file category
     function getFileCategory(extension) {
@@ -2268,6 +2410,7 @@
             if (itemElement) itemElement.classList.add('scanning');
 
             let matches = [];
+            let fallbackPdfResult = null;
 
             // Phase 1: Magic byte probe — 1 Range request reveals the true file type instantly.
             if (!forceDeep) {
@@ -2275,11 +2418,20 @@
                 const sigResult = await snipeFileType(pdfUrl);
                 if (sigResult) {
                     console.log(`SIGNATURE MATCH: ${sigResult.url} → ${sigResult.extension}`);
-                    matches.push({
-                        url: sigResult.url, type: sigResult.type,
-                        size: sigResult.size, category: sigResult.category,
-                        extension: sigResult.extension
-                    });
+
+                    // NEW: PRIORITIZE MEDIA LOGIC
+                    // If we found a document (PDF) but user wants to prioritize media -> Ignore it (for now) and Force Deep Scan
+                    if (CONFIG.PRIORITIZE_MEDIA && sigResult.category === 'document') {
+                        console.log('Prioritize Media ENABLED: Found Document, but forcing search for better formats...');
+                        setStatus('PDF found, but probing for video (Prioritize Media)...', 'warning');
+                        fallbackPdfResult = sigResult; // Store for fallback
+                    } else {
+                        matches.push({
+                            url: sigResult.url, type: sigResult.type,
+                            size: sigResult.size, category: sigResult.category,
+                            extension: sigResult.extension
+                        });
+                    }
                 }
             }
 
@@ -2314,6 +2466,35 @@
                     }
 
                     await randomDelay(200, 500);
+                }
+            }
+
+            // Phase 3: Fallback Restoration
+            // If Phase 2 found nothing (e.g. no video), but we had a valid PDF from Phase 1, use it.
+            if (matches.length === 0 && fallbackPdfResult) {
+                console.log(`Deep scan yielded no media. Falling back to found PDF: ${fallbackPdfResult.url}`);
+                setStatus('No hidden media found. Reverting to PDF.', 'info');
+                matches.push({
+                    url: fallbackPdfResult.url, type: fallbackPdfResult.type,
+                    size: fallbackPdfResult.size, category: fallbackPdfResult.category,
+                    extension: fallbackPdfResult.extension
+                });
+            } else if (matches.length === 0 && !forceDeep) {
+                // LAST RESORT: If everything failed, try one quick probe of the .pdf URL without Range request
+                // This catches cases where the server blocks Range probes but allows regular ones.
+                console.log('Total scan failure. Running final simple-probe of original URL...');
+                try {
+                    const finalResp = await fetchWithRetry(pdfUrl, { method: 'HEAD' });
+                    const contentType = finalResp.headers.get('content-type') || '';
+                    if (contentType.includes('pdf')) {
+                        console.log('Final probe confirmed PDF via Content-Type header.');
+                        matches.push({
+                            url: pdfUrl, type: 'application/pdf', size: null,
+                            category: 'document', extension: '.pdf'
+                        });
+                    }
+                } catch (e) {
+                    console.error('Final fallback probe failed.', e);
                 }
             }
 
@@ -2934,6 +3115,14 @@
 
                             // If extension mismatch, correct it!
                             if (sig.ext !== extension) {
+                                // SOFT 404 DETECTION:
+                                // If we asked for .avi (or any non-pdf) and got a .pdf back, it's likely the server
+                                // serving the original PDF file instead of a 404.
+                                if (sig.ext === '.pdf' && extension !== '.pdf') {
+                                    console.warn(`[Signature Verify] SOFT 404 DETECTED: Requested ${extension}, got PDF (likely original file). Rejecting.`);
+                                    return { success: false, reason: 'soft_404_pdf' };
+                                }
+
                                 console.warn(`Type Mismatch: URL has ${extension}, Magic Bytes say ${sig.ext}. Updating...`);
                                 finalExtension = sig.ext;
                             }
@@ -3090,17 +3279,6 @@
 
 
 
-    // Close Player
-    function closePlayer() {
-        const modal = document.getElementById('doj-media-modal');
-        if (modal) {
-            modal.classList.remove('active');
-            setTimeout(() => {
-                modal.style.display = 'none';
-                document.getElementById('doj-player-container').innerHTML = ''; // Stop playback
-            }, 300);
-        }
-    }
 
     // State Management Class
     // Helper to get filename stem (no extension)
@@ -3165,18 +3343,7 @@
 
             // downloadStats synced dynamically via getStats() — no manual override needed
 
-            // --- MIGRATION: Fix contaminated state (Found PDFs) ---
-            let migrationCount = 0;
-            this.state.files.forEach(file => {
-                if ((file.status === 'found' || file.status === 'downloaded') && /\.pdf($|\?|#)/i.test(file.url)) {
-                    console.warn(`Internal Audit: Resetting non-converted link ${file.url}.`);
-                    file.status = 'detected';
-                    migrationCount++;
-                }
-            });
-            if (migrationCount > 0) {
-                console.log(`audit complete: Reset ${migrationCount} legacy links.`);
-            }
+            // DownloadStats synced dynamically via getStats()
 
             // Run cleanup on load to fix existing dupes
             this.cleanupDuplicates();
@@ -3652,16 +3819,23 @@
 
         // Helper to update status (Refactored to global)
 
-        // Get links that are in 'detected' state
-        let detectedFiles = StateManager.getDetected();
-        console.log(`Scanning ${detectedFiles.length} links (Signature-First, Parallel: ${concurrentLimit})...`);
+        // Get links that are in 'detected' or 'failed' state
+        let detectedFiles = StateManager.state.files.filter(f => f.status === 'detected' || f.status === 'failed');
+        console.log(`Scanning ${detectedFiles.length} links (Detected + Missed, Parallel: ${concurrentLimit})...`);
 
         if (detectedFiles.length === 0) {
             collectPageLinks();
             detectedFiles = StateManager.getDetected();
 
             if (detectedFiles.length === 0) {
-                setStatus('No links collected. Reload or find a page with PDFs.', 'error');
+                const stats = StateManager.getStats();
+                const totalResolved = stats.found + stats.downloaded;
+                if (totalResolved > 0) {
+                    setStatus(`${totalResolved} files already resolved. No new links found on this page.`, 'info');
+                    console.log(`Scan skipped: ${totalResolved} files already resolved, 0 new files discovered.`);
+                } else {
+                    setStatus('No links discovered. Reload or find a page with PDFs.', 'error');
+                }
                 return;
             }
         }
