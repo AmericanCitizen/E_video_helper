@@ -3765,6 +3765,12 @@
                     if (linkElement) injectInlineResult(linkElement, fileEntry);
                     resolvedLinks.add(getFilenameStem(fileData.url));
                     resolvedLinks.add(stem);
+                } else {
+                    // MARK AS FAILED to prevent re-scanning
+                    console.log(`Marking ${stem} as FAILED (no valid file found after ${fallbackExtensions.length} probes).`);
+                    StateManager.markFailed(pdfUrl);
+                    renderFileList();
+                    updateStats();
                 }
 
                 // Cleanup Scanning State
