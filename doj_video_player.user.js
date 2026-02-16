@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Epstein File Sniper
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  Precision-targeted detection of videos, archives, and images mislabeled as PDFs on DOJ Epstein files page
+// @version      3.0
+// @description  Magic-byte signature detection of mislabeled files on DOJ Epstein page (v3: single Range request identifies type — no extension loop)
 // @author       You
 // @updateURL    https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js
 // @downloadURL  https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js
@@ -46,9 +46,9 @@
     }
     // ------------------------------------
 
-    const SCRIPT_VERSION = '2.3';
+    const SCRIPT_VERSION = '3.0';
     const UPDATE_URL = 'https://raw.githubusercontent.com/AmericanCitizen/E_video_helper/main/doj_video_player.user.js';
-    console.log(`Epstein File Sniper v${SCRIPT_VERSION}: Scope locked, acquiring targets...`);
+    console.log(`Epstein File Sniper v${SCRIPT_VERSION}: Signature-first detection engine loaded.`);
 
     // Default Configuration
     const DEFAULT_CONFIG = {
@@ -229,20 +229,19 @@
         }
     }
 
-    // Top 5 Filter Definitions
+    // Top 5 per category – used only by the Settings panel "Top 5" shortcut button
     const TOP_EXTENSIONS = {
         video: ['.mp4', '.mov', '.avi', '.mkv', '.wmv'],
         audio: ['.mp3', '.wav', '.m4a', '.flac', '.aac'],
         image: ['.jpg', '.png', '.gif', '.webp', '.jpeg'],
         archive: ['.zip', '.rar', '.7z', '.tar', '.gz'],
-        document: ['.doc', '.docx', '.xls', '.xlsx', '.pdf'], // PDF included here for reference, though we skip it
+        document: ['.doc', '.docx', '.xls', '.xlsx', '.pdf'],
         forensic: ['.E01', '.dd', '.zip', '.iso', '.img']
     };
 
     const ALL_EXTENSIONS = Object.values(FILE_EXTENSIONS).flat();
-    const resolvedLinks = new Set(); // Track links that have been successfully found during this session (optimization)
-    const scanningUrls = new Set();  // Track URLs currently being scanned to persist UI state
-    const extensionHitCounts = {};   // Track cumulative hits per extension across scans {'.mp4': 15, '.mov': 2, ...}
+    const resolvedLinks = new Set(); // Track links resolved this session (dedup optimisation)
+    const scanningUrls = new Set();  // Track URLs currently being scanned (UI state)
 
     // State Manager initialized below
     let activeTab = 'found'; // Default tab
@@ -289,14 +288,211 @@
         return arr;
     }
 
-    // Sort extensions by hit count (descending), preserving original order for ties
-    function sortExtensionsByPriority(extensions) {
-        return [...extensions].sort((a, b) => {
-            const hitsA = extensionHitCounts[a] || 0;
-            const hitsB = extensionHitCounts[b] || 0;
-            if (hitsB !== hitsA) return hitsB - hitsA;
-            return extensions.indexOf(a) - extensions.indexOf(b);
-        });
+    // ============================================================
+    // MAGIC BYTE SIGNATURE DETECTION
+    // One Range request on the .pdf URL reveals the actual file
+    // type, replacing the 100+ extension trial loop entirely.
+    // ============================================================
+
+    // Each entry: { ext, cat, match(Uint8Array) → boolean }
+    // Ordered from most-specific to least-specific to avoid ambiguity.
+    const FILE_SIGNATURES = [
+        // --- VIDEO ---
+        // MKV / WebM (EBML header)
+        { ext: '.mkv',  cat: 'video',   match: b => b[0]===0x1A && b[1]===0x45 && b[2]===0xDF && b[3]===0xA3 },
+        // ASF / WMV / WMA
+        { ext: '.wmv',  cat: 'video',   match: b => b[0]===0x30 && b[1]===0x26 && b[2]===0xB2 && b[3]===0x75 && b[4]===0x8E && b[5]===0x66 && b[6]===0xCF && b[7]===0x11 },
+        // MPEG-4 / MOV / 3GP – "ftyp" box at byte offset 4
+        { ext: '.mp4',  cat: 'video',   match: b => b.length >= 8 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 },
+        // AVI  (RIFF....AVI )
+        { ext: '.avi',  cat: 'video',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x41 && b[9]===0x56 && b[10]===0x49 && b[11]===0x20 },
+        // FLV
+        { ext: '.flv',  cat: 'video',   match: b => b[0]===0x46 && b[1]===0x4C && b[2]===0x56 },
+        // MPEG Program/Transport Stream
+        { ext: '.mpg',  cat: 'video',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x01 && (b[3]===0xBA || b[3]===0xB3) },
+
+        // --- AUDIO ---
+        // MP3 with ID3 tag
+        { ext: '.mp3',  cat: 'audio',   match: b => b[0]===0x49 && b[1]===0x44 && b[2]===0x33 },
+        // MP3 raw frame sync
+        { ext: '.mp3',  cat: 'audio',   match: b => b[0]===0xFF && (b[1]===0xFB || b[1]===0xF3 || b[1]===0xF2) },
+        // FLAC
+        { ext: '.flac', cat: 'audio',   match: b => b[0]===0x66 && b[1]===0x4C && b[2]===0x61 && b[3]===0x43 },
+        // OGG / OGA / OGV
+        { ext: '.ogg',  cat: 'audio',   match: b => b[0]===0x4F && b[1]===0x67 && b[2]===0x67 && b[3]===0x53 },
+        // WAV  (RIFF....WAVE)
+        { ext: '.wav',  cat: 'audio',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x57 && b[9]===0x41 && b[10]===0x56 && b[11]===0x45 },
+        // MIDI
+        { ext: '.mid',  cat: 'audio',   match: b => b[0]===0x4D && b[1]===0x54 && b[2]===0x68 && b[3]===0x64 },
+
+        // --- IMAGE ---
+        // PNG
+        { ext: '.png',  cat: 'image',   match: b => b[0]===0x89 && b[1]===0x50 && b[2]===0x4E && b[3]===0x47 && b[4]===0x0D && b[5]===0x0A && b[6]===0x1A && b[7]===0x0A },
+        // JPEG
+        { ext: '.jpg',  cat: 'image',   match: b => b[0]===0xFF && b[1]===0xD8 && b[2]===0xFF },
+        // GIF
+        { ext: '.gif',  cat: 'image',   match: b => b[0]===0x47 && b[1]===0x49 && b[2]===0x46 && b[3]===0x38 },
+        // WebP  (RIFF....WEBP)
+        { ext: '.webp', cat: 'image',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x57 && b[9]===0x45 && b[10]===0x42 && b[11]===0x50 },
+        // TIFF little-endian
+        { ext: '.tif',  cat: 'image',   match: b => b[0]===0x49 && b[1]===0x49 && b[2]===0x2A && b[3]===0x00 },
+        // TIFF big-endian
+        { ext: '.tif',  cat: 'image',   match: b => b[0]===0x4D && b[1]===0x4D && b[2]===0x00 && b[3]===0x2A },
+        // PSD
+        { ext: '.psd',  cat: 'image',   match: b => b[0]===0x38 && b[1]===0x42 && b[2]===0x50 && b[3]===0x53 },
+        // JPEG 2000
+        { ext: '.jp2',  cat: 'image',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x00 && b[3]===0x0C && b[4]===0x6A && b[5]===0x50 },
+        // BMP
+        { ext: '.bmp',  cat: 'image',   match: b => b[0]===0x42 && b[1]===0x4D },
+
+        // --- ARCHIVE ---
+        // ZIP  (also DOCX, XLSX, EPUB, JAR, APK, etc.)
+        { ext: '.zip',  cat: 'archive', match: b => b[0]===0x50 && b[1]===0x4B && (b[2]===0x03 || b[2]===0x05 || b[2]===0x07) },
+        // RAR v1.5+
+        { ext: '.rar',  cat: 'archive', match: b => b[0]===0x52 && b[1]===0x61 && b[2]===0x72 && b[3]===0x21 && b[4]===0x1A && b[5]===0x07 },
+        // 7-Zip
+        { ext: '.7z',   cat: 'archive', match: b => b[0]===0x37 && b[1]===0x7A && b[2]===0xBC && b[3]===0xAF && b[4]===0x27 && b[5]===0x1C },
+        // GZIP
+        { ext: '.gz',   cat: 'archive', match: b => b[0]===0x1F && b[1]===0x8B },
+        // BZIP2
+        { ext: '.bz2',  cat: 'archive', match: b => b[0]===0x42 && b[1]===0x5A && b[2]===0x68 },
+        // XZ
+        { ext: '.xz',   cat: 'archive', match: b => b[0]===0xFD && b[1]===0x37 && b[2]===0x7A && b[3]===0x58 && b[4]===0x5A && b[5]===0x00 },
+        // LZ4
+        { ext: '.lz4',  cat: 'archive', match: b => b[0]===0x04 && b[1]===0x22 && b[2]===0x4D && b[3]===0x18 },
+        // Zstandard
+        { ext: '.zst',  cat: 'archive', match: b => b[0]===0x28 && b[1]===0xB5 && b[2]===0x2F && b[3]===0xFD },
+        // Microsoft Cabinet
+        { ext: '.cab',  cat: 'archive', match: b => b[0]===0x4D && b[1]===0x53 && b[2]===0x43 && b[3]===0x46 },
+
+        // --- DOCUMENT ---
+        // OLE2 Compound File  (DOC / XLS / PPT / MSG / MSI)
+        { ext: '.doc',  cat: 'document', match: b => b[0]===0xD0 && b[1]===0xCF && b[2]===0x11 && b[3]===0xE0 && b[4]===0xA1 && b[5]===0xB1 && b[6]===0x1A && b[7]===0xE1 },
+        // RTF
+        { ext: '.rtf',  cat: 'document', match: b => b[0]===0x7B && b[1]===0x5C && b[2]===0x72 && b[3]===0x74 && b[4]===0x66 },
+
+        // --- FORENSIC ---
+        // EnCase EWF v1
+        { ext: '.e01',    cat: 'forensic', match: b => b[0]===0x45 && b[1]===0x56 && b[2]===0x46 },
+        // PCAP (LE & BE)
+        { ext: '.pcap',   cat: 'forensic', match: b => (b[0]===0xD4 && b[1]===0xC3 && b[2]===0xB2 && b[3]===0xA1) || (b[0]===0xA1 && b[1]===0xB2 && b[2]===0xC3 && b[3]===0xD4) },
+        // PCAP-NG
+        { ext: '.pcapng', cat: 'forensic', match: b => b[0]===0x0A && b[1]===0x0D && b[2]===0x0D && b[3]===0x0A },
+        // SQLite
+        { ext: '.db',     cat: 'forensic', match: b => b[0]===0x53 && b[1]===0x51 && b[2]===0x4C && b[3]===0x69 && b[4]===0x74 && b[5]===0x65 && b[6]===0x20 },
+    ];
+
+    // Match a Uint8Array against the signatures table, return first hit or null.
+    function detectFileTypeFromMagicBytes(bytes) {
+        if (!bytes || bytes.length < 4) return null;
+        for (const sig of FILE_SIGNATURES) {
+            try { if (sig.match(bytes)) return sig; } catch (_) {}
+        }
+        return null;
+    }
+
+    // Fetch first 64 bytes of a URL using a Range request.
+    // Uses stream reader + cancel so we never download the full file,
+    // even if the server ignores the Range header and returns 200 + full body.
+    // Returns Uint8Array (up to 64 bytes) on success, null on failure.
+    async function fetchMagicBytes(url) {
+        try {
+            const headers = {
+                ...(CONFIG.USE_STEALTH_MODE ? getRealisticHeaders(url) : {}),
+                'Range': 'bytes=0-63'
+            };
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 8000);
+            const response = await fetch(url, {
+                method: 'GET', headers, signal: controller.signal,
+                credentials: 'include', redirect: 'follow'
+            });
+            clearTimeout(tid);
+
+            if (response.ok || response.status === 206) {
+                // Stream-read exactly the first 64 bytes then cancel.
+                // Critical: avoids buffering the full file if server ignores Range header.
+                const reader = response.body.getReader();
+                const result = new Uint8Array(64);
+                let filled = 0;
+                try {
+                    while (filled < 64) {
+                        const { done, value } = await reader.read();
+                        if (done || !value) break;
+                        const take = Math.min(value.length, 64 - filled);
+                        result.set(value.subarray(0, take), filled);
+                        filled += take;
+                    }
+                } finally {
+                    reader.cancel(); // Stop downloading the rest immediately
+                }
+                const bytes = result.subarray(0, filled);
+                console.debug(`fetchMagicBytes: got ${filled} bytes from ${url.split('/').pop()} | hex: ${Array.from(bytes.subarray(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`);
+                return bytes;
+            }
+            console.debug(`fetchMagicBytes: status ${response.status} for ${url.split('/').pop()}`);
+        } catch (e) {
+            console.debug(`fetchMagicBytes failed for ${url.split('/').pop()}:`, e.message);
+        }
+        return null;
+    }
+
+    // One-shot type identification via magic bytes.
+    //
+    // Strategy:
+    //   1. Probe the .pdf URL itself — works when the file is truly mislabeled
+    //      (the server serves video/archive bytes at the .pdf URL).
+    //   2. If the .pdf URL returns actual PDF bytes (%PDF) or an unrecognized
+    //      signature, probe the most-likely candidate extension URLs directly.
+    //      This covers the case where the DOJ serves a real PDF at .pdf but
+    //      also hosts the same content as .mp4/.avi/etc. at a parallel URL.
+    //
+    // Returns a fileData-compatible object or null (triggers extension loop fallback).
+    async function snipeFileType(pdfUrl) {
+        // Step 1: probe the .pdf URL itself
+        const pdfBytes = await fetchMagicBytes(pdfUrl);
+        if (pdfBytes) {
+            const sig = detectFileTypeFromMagicBytes(pdfBytes);
+            if (sig) {
+                console.log(`Signature HIT on .pdf URL: ${sig.ext} (${sig.cat}) for ${pdfUrl.split('/').pop()}`);
+                // Confirm with the extension-swapped URL to get real size/headers.
+                const confirmed = await testFileUrl(pdfUrl, sig.ext);
+                if (confirmed.success) return confirmed;
+                // Fallback: original URL already serves the right content.
+                return { success: true, url: pdfUrl, size: pdfBytes.length,
+                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat };
+            }
+            // Log the first bytes so the developer can see what we're getting
+            const hex = Array.from(pdfBytes.subarray(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.debug(`Signature MISS on .pdf URL (${pdfUrl.split('/').pop()}): first bytes = ${hex}`);
+        }
+
+        // Step 2: probe top-priority candidate extension URLs directly.
+        // The .pdf URL is a real PDF; the non-PDF version lives at a different URL.
+        const PROBE_CANDIDATES = [
+            '.mp4', '.mov', '.avi', '.wmv', '.mkv', '.webm',   // video
+            '.mp3', '.wav', '.flac', '.m4a',                    // audio
+            '.jpg', '.png', '.gif',                             // image
+            '.zip', '.rar', '.7z',                              // archive
+        ];
+        for (const ext of PROBE_CANDIDATES) {
+            if (!CONFIG.ENABLED_TYPES[getFileCategory(ext)] || CONFIG.ENABLED_EXTENSIONS[ext] === false) continue;
+            const candidateBytes = await fetchMagicBytes(
+                (() => { try { const u = new URL(pdfUrl); u.pathname = u.pathname.replace(/\.pdf$/i, ext); return u.toString(); } catch (_) { return pdfUrl.replace(/\.pdf$/i, ext); } })()
+            );
+            if (!candidateBytes) continue;
+            const sig = detectFileTypeFromMagicBytes(candidateBytes);
+            if (sig) {
+                console.log(`Signature HIT on candidate ${ext}: confirmed as ${sig.ext} (${sig.cat})`);
+                const candidateUrl = (() => { try { const u = new URL(pdfUrl); u.pathname = u.pathname.replace(/\.pdf$/i, sig.ext); return u.toString(); } catch (_) { return pdfUrl.replace(/\.pdf$/i, sig.ext); } })();
+                const confirmed = await testFileUrl(pdfUrl, sig.ext);
+                if (confirmed.success) return confirmed;
+                return { success: true, url: candidateUrl, size: candidateBytes.length,
+                    type: `${sig.cat}/${sig.ext.slice(1)}`, extension: sig.ext, category: sig.cat };
+            }
+        }
+
+        return null; // Trigger extension loop fallback
     }
 
     // Initialize Config with Extensions
@@ -1942,13 +2138,8 @@
 
             } else {
                 // Manual Scan Button
-                const isRetrying = fileData.triedExtensions && fileData.triedExtensions.length > 0;
-                const btnIcon = isRetrying ? '🔄' : '🔍';
-                const btnTitle = isRetrying ? 'Retry Scan' : 'Scan This File Now';
-                const btnBg = isRetrying ? 'rgba(245, 158, 11, 0.2)' : 'rgba(59, 130, 246, 0.3)';
-
-                actionButtons += `<button class="doj-file-dl scan-btn" style="background: ${btnBg};" title="${btnTitle}" ${dataUrlAttr}>${btnIcon}</button>`;
-                actionButtons += `<span style="font-size:10px; opacity:0.5; margin-left:6px;">${isRetrying ? 'FAILED' : 'WAITING'}</span>`;
+                actionButtons += `<button class="doj-file-dl scan-btn" style="background: rgba(59, 130, 246, 0.3);" title="Scan This File Now" ${dataUrlAttr}>🔍</button>`;
+                actionButtons += `<span style="font-size:10px; opacity:0.5; margin-left:6px;">WAITING</span>`;
             }
 
             let alternatesHtml = '';
@@ -2004,73 +2195,54 @@
             const itemElement = document.getElementById(`file-item-${sanitizeId(pdfUrl)}`);
             if (itemElement) itemElement.classList.add('scanning');
 
-            // Build extensions list
-            const categoryOrder = Object.keys(FILE_EXTENSIONS).filter(cat => CONFIG.ENABLED_TYPES[cat]);
-            let orderedExtensions = [];
-            categoryOrder.forEach(category => {
-                const categoryExts = FILE_EXTENSIONS[category].filter(ext =>
-                    CONFIG.ENABLED_EXTENSIONS[ext] !== false
-                );
-                const sorted = sortExtensionsByPriority(categoryExts);
-                orderedExtensions.push(...sorted);
-            });
+            let matches = [];
 
-            // ADAPTIVE PRIORITIZATION (skip if deep scan to check all)
+            // Phase 1: Magic byte probe — 1 Range request reveals the true file type instantly.
             if (!forceDeep) {
-                const priorityExt = StateManager.getLastSuccessfulExtension();
-                if (priorityExt) {
-                    // Move priority extension to the front
-                    const idx = orderedExtensions.indexOf(priorityExt);
-                    if (idx !== -1) {
-                        orderedExtensions.splice(idx, 1);
-                        orderedExtensions.unshift(priorityExt);
-                        console.log(`Adaptive Scan: Prioritizing ${priorityExt}`);
-                    }
+                setStatus('Probing file signature...', 'info');
+                const sigResult = await snipeFileType(pdfUrl);
+                if (sigResult) {
+                    console.log(`SIGNATURE MATCH: ${sigResult.url} → ${sigResult.extension}`);
+                    matches.push({
+                        url: sigResult.url, type: sigResult.type,
+                        size: sigResult.size, category: sigResult.category,
+                        extension: sigResult.extension
+                    });
                 }
             }
 
-            let matches = [];
+            // Phase 2: Extension loop fallback (signature unrecognized OR deep scan for alternates).
+            if (matches.length === 0 || forceDeep) {
+                const categoryOrder = Object.keys(FILE_EXTENSIONS).filter(cat => CONFIG.ENABLED_TYPES[cat]);
+                let orderedExtensions = [];
+                categoryOrder.forEach(category => {
+                    const categoryExts = FILE_EXTENSIONS[category].filter(ext => CONFIG.ENABLED_EXTENSIONS[ext] !== false);
+                    orderedExtensions.push(...categoryExts);
+                });
 
-            for (let i = 0; i < orderedExtensions.length; i++) {
-                const extension = orderedExtensions[i];
+                for (let i = 0; i < orderedExtensions.length; i++) {
+                    const extension = orderedExtensions[i];
+                    if (matches.some(m => m.extension === extension)) continue;
 
-                // Manual scan: check all, updating status
-                const msg = `Checking ${extension}...`;
-                setStatus(msg, 'info');
+                    setStatus(`Checking ${extension}...`, 'info');
+                    const fileData = await testFileUrl(pdfUrl, extension);
 
-                const fileData = await testFileUrl(pdfUrl, extension);
-
-                if (fileData.success) {
-                    console.log(`MANUAL MATCH: ${fileData.url}`);
-                    matches.push({
-                        url: fileData.url,
-                        type: fileData.type,
-                        size: fileData.size,
-                        category: fileData.category,
-                        extension: extension
-                    });
-
-                    // If not deep scan, we stop at first match
-                    if (!forceDeep) {
-                        matches = [matches[0]]; // Should only be one
+                    if (fileData.success) {
+                        console.log(`EXTENSION MATCH: ${fileData.url}`);
+                        matches.push({
+                            url: fileData.url, type: fileData.type,
+                            size: fileData.size, category: fileData.category,
+                            extension: extension
+                        });
+                        if (!forceDeep) break;
+                    } else if (fileData.reason === 'blocked') {
+                        setStatus('SCAN BLOCKED (403/429).', 'error');
+                        alert('DOJ Site is blocking requests.');
                         break;
                     }
-                    // If deep scan, continue checking to find alternates
-                } else if (fileData.reason === 'blocked') {
-                    setStatus('SCAN BLOCKED (403/429).', 'error');
-                    alert('DOJ Site is blocking requests.');
-                    break;
-                } else {
-                    // Failed: update tried list
-                    if (!fileEntry.triedExtensions) fileEntry.triedExtensions = [];
-                    if (!fileEntry.triedExtensions.includes(extension)) {
-                        fileEntry.triedExtensions.push(extension);
-                        StateManager.saveState();
-                    }
-                }
 
-                // Small delay
-                await randomDelay(200, 500);
+                    await randomDelay(200, 500);
+                }
             }
 
             // Cleanup Scanning State
@@ -2091,19 +2263,15 @@
                 fileEntry.category = primary.category;
                 fileEntry.status = 'found';
                 fileEntry.extension = primary.extension;
-                delete fileEntry.triedExtensions;
 
                 // Store alternates if any
                 if (matches.length > 1) {
                     fileEntry.alternates = matches.slice(1).map(m => ({
                         url: m.url,
-                        type: m.extension, // Store extension as type for display
+                        type: m.extension,
                         size: m.size
                     }));
                 }
-
-                // Learn this extension for next time
-                StateManager.setLastSuccessfulExtension(primary.extension);
 
                 StateManager.saveState();
                 renderFileList();
@@ -2841,9 +3009,7 @@
         STORAGE_KEY: 'dojFileDetectorState',
         state: {
             files: [],
-            // processedLinks removed to save space
-            downloadStats: { found: 0, downloaded: 0, failed: 0 },
-            lastSuccessfulExtension: null // Track the last working extension
+            downloadStats: { found: 0, downloaded: 0, failed: 0 }
         },
 
         init() {
@@ -2852,9 +3018,7 @@
                 try {
                     const parsedState = JSON.parse(storedState);
                     this.state.files = parsedState.files || [];
-                    // this.state.processedLinks = new Set(parsedState.processedLinks || []);
                     this.state.downloadStats = parsedState.downloadStats || { found: 0, downloaded: 0, failed: 0 };
-                    this.state.lastSuccessfulExtension = parsedState.lastSuccessfulExtension || null;
                 } catch (e) {
                     console.error('State load error', e);
                 }
@@ -2894,9 +3058,7 @@
 
                 const stateStr = JSON.stringify({
                     files: this.state.files,
-                    // processedLinks: Array.from(this.state.processedLinks), // REMOVED
-                    downloadStats: this.state.downloadStats,
-                    lastSuccessfulExtension: this.state.lastSuccessfulExtension
+                    downloadStats: this.state.downloadStats
                 });
 
                 localStorage.setItem(this.STORAGE_KEY, stateStr);
@@ -2918,15 +3080,6 @@
             return this.state.files.find(f => f.url === url || f.originalUrl === url);
         },
 
-        // Priority Extension Logic
-        setLastSuccessfulExtension(ext) {
-            this.state.lastSuccessfulExtension = ext;
-            this.saveState();
-        },
-
-        getLastSuccessfulExtension() {
-            return this.state.lastSuccessfulExtension;
-        },
 
 
 
@@ -3339,13 +3492,12 @@
             console.log('Force Rescan initiated: Clearing cache and resetting statuses...');
             resolvedLinks.clear();
 
-            // Reset 'failed' items to 'detected' and clear triedExtensions for everyone
+            // Reset 'failed' items to 'detected'
             const allFiles = StateManager.getFiles();
             let resetCount = 0;
             allFiles.forEach(f => {
                 if (f.status === 'failed' || f.status === 'detected') {
                     f.status = 'detected';
-                    f.triedExtensions = []; // Force retry of all extensions
                     resetCount++;
                 }
             });
@@ -3364,7 +3516,7 @@
 
         // Get links that are in 'detected' state
         let detectedFiles = StateManager.getDetected();
-        console.log(`Scanning ${detectedFiles.length} links (File-First Sticky-Type, Parallel: ${concurrentLimit})...`);
+        console.log(`Scanning ${detectedFiles.length} links (Signature-First, Parallel: ${concurrentLimit})...`);
 
         if (detectedFiles.length === 0) {
             collectPageLinks();
@@ -3381,33 +3533,13 @@
 
         updateProgress(0, 100, `Starting scan (${concurrentLimit} threads)...`);
 
-        // 1. Build ordered extension list
-        const categoryOrder = Object.keys(FILE_EXTENSIONS).filter(cat => CONFIG.ENABLED_TYPES[cat]);
-        let orderedExtensions = [];
-        categoryOrder.forEach(category => {
-            const categoryExts = FILE_EXTENSIONS[category].filter(ext =>
-                CONFIG.ENABLED_EXTENSIONS[ext] !== false
-            );
-            const sorted = sortExtensionsByPriority(categoryExts);
-            orderedExtensions.push(...sorted);
+        // 1. Fallback extension list – used only when the magic byte probe is inconclusive.
+        const fallbackCategoryOrder = Object.keys(FILE_EXTENSIONS).filter(cat => CONFIG.ENABLED_TYPES[cat]);
+        let fallbackExtensions = [];
+        fallbackCategoryOrder.forEach(category => {
+            const categoryExts = FILE_EXTENSIONS[category].filter(ext => CONFIG.ENABLED_EXTENSIONS[ext] !== false);
+            fallbackExtensions.push(...categoryExts);
         });
-
-        // ADAPTIVE PRIORITIZATION
-        const priorityExt = StateManager.getLastSuccessfulExtension();
-        if (priorityExt) {
-            // Move priority extension to the front
-            const idx = orderedExtensions.indexOf(priorityExt);
-            if (idx !== -1) {
-                orderedExtensions.splice(idx, 1);
-                orderedExtensions.unshift(priorityExt);
-                console.log(`Adaptive Scan: Prioritizing ${priorityExt}`);
-            }
-        }
-
-        if (orderedExtensions.length === 0) {
-            setStatus('No extensions enabled. Check settings.', 'error');
-            return;
-        }
 
         // 2. Build task list
         let filesToCheck = detectedFiles.filter(f => f.status === 'detected');
@@ -3422,9 +3554,8 @@
         }
 
         // 3. Shared State
-        let stickyExtIndex = 0; // Shared across all workers
         let processedCount = 0;
-        let globalFileIndex = 0; // Atomic counter for picking next file
+        let globalFileIndex = 0;
         let isBlocked = false;
 
         // 4. Worker Function
@@ -3452,103 +3583,54 @@
                 // Track Scanning State
                 scanningUrls.add(pdfUrl);
 
-                // visual feedback
                 const itemElement = document.getElementById(`file-item-${sanitizeId(pdfUrl)}`);
                 if (itemElement) itemElement.classList.add('scanning');
 
-                let fileResolved = false;
+                const msg = `Scanning... (${processedCount}/${totalFiles}) | Threads: ${concurrentLimit}`;
+                if (workerId === 0) setStatus(msg, 'info');
+                updateProgress(Math.round((processedCount / totalFiles) * 100), 100, msg);
 
-                // Capture current sticky index to start this file's loop
-                // (It might change while we are looping, but we stick to *our* start point for this file)
-                let currentStickyStart = stickyExtIndex;
+                // Phase 1: Magic byte probe — 1 Range request identifies file type instantly.
+                let fileData = await snipeFileType(pdfUrl);
 
-                // INNER LOOP: Extensions
-                for (let i = 0; i < orderedExtensions.length; i++) {
-                    if (isBlocked) break;
-
-                    const currentIdx = (currentStickyStart + i) % orderedExtensions.length;
-                    const extension = orderedExtensions[currentIdx];
-
-                    // Skip previously failed
-                    if (fileEntry.triedExtensions && fileEntry.triedExtensions.includes(extension)) {
-                        continue;
-                    }
-
-                    // Update UI (throttled/approximate)
-                    const msg = `Scanning... (${processedCount}/${totalFiles}) | Threads: ${concurrentLimit}`;
-                    // Only update text occasionally to save DOM perfs
-                    if (workerId === 0) setStatus(msg, 'info');
-
-                    // Simple progress bar
-                    updateProgress(Math.round((processedCount / totalFiles) * 100), 100, msg);
-
-                    // Test URL
-                    const fileData = await testFileUrl(pdfUrl, extension);
-
-                    if (fileData.success) {
-                        console.log(`MATCH: ${fileData.url} (Found by W${workerId} with sticky index ${currentIdx}: ${extension})`);
-
-                        // Found! Update State via Manager to ensure consistency
-                        // We use pdfUrl (the original link) to find the record, even if we are changing the URL
-                        if (StateManager.updateFound(pdfUrl, fileData)) {
-                            console.log(`State updated for ${getFilenameStem(fileData.url)}: FOUND`);
-                        } else {
-                            console.error(`CRITICAL: Failed to update state for ${pdfUrl}. Record not found?`);
+                // Phase 2: Extension loop fallback (signature unrecognized).
+                if (!fileData) {
+                    for (let i = 0; i < fallbackExtensions.length; i++) {
+                        if (isBlocked) break;
+                        const extension = fallbackExtensions[i];
+                        const candidate = await testFileUrl(pdfUrl, extension);
+                        if (candidate.success) {
+                            fileData = candidate;
+                            break;
+                        } else if (candidate.reason === 'blocked') {
+                            console.error('BLOCKED Signal received!');
+                            isBlocked = true;
+                            setStatus('SCAN BLOCKED (403/429). Reloading in 5s...', 'warning');
+                            localStorage.setItem('doj_resume_scan', 'true');
+                            setTimeout(() => window.location.reload(), 5000);
+                            return;
                         }
-
-                        // Force UI refresh
-                        renderFileList();
-                        updateStats();
-
-
-
-                        // Inject result
-                        const linkElement = document.querySelector(`a[href="${pdfUrl}"]`);
-                        if (linkElement) injectInlineResult(linkElement, fileEntry);
-
-                        // Learn this extension
-                        StateManager.setLastSuccessfulExtension(extension);
-
-                        // Mark stem as resolved in session cache
-                        resolvedLinks.add(getFilenameStem(fileData.url));
-                        resolvedLinks.add(stem);
-
-                        // Update global sticky index for OTHER workers to benefit next time
-                        stickyExtIndex = currentIdx;
-
-                        fileResolved = true;
-                        break; // Stop extension loop
-                    } else if (fileData.reason === 'blocked') {
-                        console.error('BLOCKED Signal received!');
-                        isBlocked = true;
-                        setStatus('SCAN BLOCKED (403/429). Reloading in 5s to clear session...', 'warning');
-
-                        // Set resume flag for next load
-                        localStorage.setItem('doj_resume_scan', 'true');
-
-                        // Reload after 5s
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 5000);
-
-                        return; // Exit worker
-                    } else {
-                        // Failed (Not found)
-                        if (!fileEntry.triedExtensions) fileEntry.triedExtensions = [];
-                        fileEntry.triedExtensions.push(extension);
-                        StateManager.saveState(); // Save progress
+                        await randomDelay(CONFIG.DELAY_MIN, CONFIG.DELAY_MAX);
                     }
+                }
 
-                    // Delay (per worker)
-                    await randomDelay(CONFIG.DELAY_MIN, CONFIG.DELAY_MAX);
+                if (fileData && fileData.success) {
+                    console.log(`MATCH: ${fileData.url} (Worker ${workerId})`);
+                    if (StateManager.updateFound(pdfUrl, fileData)) {
+                        console.log(`State updated for ${getFilenameStem(fileData.url)}: FOUND`);
+                    } else {
+                        console.error(`CRITICAL: Failed to update state for ${pdfUrl}.`);
+                    }
+                    renderFileList();
+                    updateStats();
+                    const linkElement = document.querySelector(`a[href="${pdfUrl}"]`);
+                    if (linkElement) injectInlineResult(linkElement, fileEntry);
+                    resolvedLinks.add(getFilenameStem(fileData.url));
+                    resolvedLinks.add(stem);
                 }
 
                 // Cleanup Scanning State
                 scanningUrls.delete(pdfUrl);
-
-                // Re-query element to remove class (DOM updated)
-                // fileEntry might have been updated by StateManager, but we need the ID we started with (pdfUrl)
-                // ACTUALLY, pdfUrl is the original URL we're scanning.
                 const finalEl = document.getElementById(`file-item-${sanitizeId(pdfUrl)}`);
                 if (finalEl) finalEl.classList.remove('scanning');
 
