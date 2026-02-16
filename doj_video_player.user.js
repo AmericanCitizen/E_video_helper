@@ -72,7 +72,8 @@
             forensic: true  // Enabled for Evidence logs/images
         },
         // Start empty, will populate
-        ENABLED_EXTENSIONS: {}
+        ENABLED_EXTENSIONS: {},
+        AUTO_RENAME_DOWNLOADS: true  // Rename downloaded files based on detected magic-number type
     };
 
     let CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
@@ -302,6 +303,16 @@
         { ext: '.mkv',  cat: 'video',   match: b => b[0]===0x1A && b[1]===0x45 && b[2]===0xDF && b[3]===0xA3 },
         // ASF / WMV / WMA
         { ext: '.wmv',  cat: 'video',   match: b => b[0]===0x30 && b[1]===0x26 && b[2]===0xB2 && b[3]===0x75 && b[4]===0x8E && b[5]===0x66 && b[6]===0xCF && b[7]===0x11 },
+        // HEIC / HEIF – "ftyp" box at offset 4, brand "heic" at offset 8
+        { ext: '.heic', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x68 && b[9]===0x65 && b[10]===0x69 && b[11]===0x63 },
+        // HEIF – "ftyp" box with "mif1" brand
+        { ext: '.heif', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x6D && b[9]===0x69 && b[10]===0x66 && b[11]===0x31 },
+        // AVIF – "ftyp" box with "avif" brand
+        { ext: '.avif', cat: 'image',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x61 && b[9]===0x76 && b[10]===0x69 && b[11]===0x66 },
+        // 3GP – "ftyp" box with "3gp" brand at offset 8
+        { ext: '.3gp',  cat: 'video',   match: b => b.length >= 11 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x33 && b[9]===0x67 && b[10]===0x70 },
+        // M4A – "ftyp" box with "M4A " brand
+        { ext: '.m4a',  cat: 'audio',   match: b => b.length >= 12 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 && b[8]===0x4D && b[9]===0x34 && b[10]===0x41 && b[11]===0x20 },
         // MPEG-4 / MOV / 3GP – "ftyp" box at byte offset 4
         { ext: '.mp4',  cat: 'video',   match: b => b.length >= 8 && b[4]===0x66 && b[5]===0x74 && b[6]===0x79 && b[7]===0x70 },
         // AVI  (RIFF....AVI )
@@ -324,6 +335,8 @@
         { ext: '.wav',  cat: 'audio',   match: b => b.length >= 12 && b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46 && b[8]===0x57 && b[9]===0x41 && b[10]===0x56 && b[11]===0x45 },
         // MIDI
         { ext: '.mid',  cat: 'audio',   match: b => b[0]===0x4D && b[1]===0x54 && b[2]===0x68 && b[3]===0x64 },
+        // AAC (ADTS frame sync)
+        { ext: '.aac',  cat: 'audio',   match: b => b[0]===0xFF && (b[1]===0xF1 || b[1]===0xF9) },
 
         // --- IMAGE ---
         // PNG
@@ -344,6 +357,8 @@
         { ext: '.jp2',  cat: 'image',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x00 && b[3]===0x0C && b[4]===0x6A && b[5]===0x50 },
         // BMP
         { ext: '.bmp',  cat: 'image',   match: b => b[0]===0x42 && b[1]===0x4D },
+        // ICO (Windows icon)
+        { ext: '.ico',  cat: 'image',   match: b => b[0]===0x00 && b[1]===0x00 && b[2]===0x01 && b[3]===0x00 },
 
         // --- ARCHIVE ---
         // ZIP  (also DOCX, XLSX, EPUB, JAR, APK, etc.)
@@ -452,6 +467,14 @@
         // Step 1: probe the .pdf URL itself
         const pdfBytes = await fetchMagicBytes(pdfUrl);
         if (pdfBytes) {
+            // Early exit: if the .pdf URL genuinely serves PDF content, stop immediately.
+            // %PDF- magic bytes (25 50 44 46) — no extension probing needed.
+            if (pdfBytes[0] === 0x25 && pdfBytes[1] === 0x50 && pdfBytes[2] === 0x44 && pdfBytes[3] === 0x46) {
+                console.log(`Confirmed real PDF via magic bytes: ${pdfUrl.split('/').pop()}`);
+                return { success: true, url: pdfUrl, size: null, type: 'document/pdf',
+                    extension: '.pdf', category: 'document', confirmedPdf: true };
+            }
+
             const sig = detectFileTypeFromMagicBytes(pdfBytes);
             if (sig) {
                 console.log(`Signature HIT on .pdf URL: ${sig.ext} (${sig.cat}) for ${pdfUrl.split('/').pop()}`);
@@ -2294,15 +2317,15 @@
     // Download a single file
     function downloadFile(fileData) {
         const url = fileData.url;
-        const filename = url.split('/').pop();
+        const filename = generateDownloadFilename(fileData);
         const extension = filename.split('.').pop().toLowerCase();
 
         console.log(`Starting extraction for: ${filename} from ${url}`);
 
-        // FINAL SANITY GUARD
-        if (/\.pdf($|\?|#)/i.test(url)) {
-            console.error(`BLOCKING PIRATED PDF DOWNLOAD: ${url}`);
-            setStatus(`Error: Attempted to download PDF as converted file!`, 'error');
+        // FINAL SANITY GUARD — block .pdf URLs unless magic bytes confirmed it IS a real PDF.
+        if (/\.pdf($|\?|#)/i.test(url) && !fileData.confirmedPdf) {
+            console.error(`BLOCKING unconfirmed PDF download: ${url}`);
+            setStatus(`Error: Attempted to download unconfirmed PDF!`, 'error');
             fileData.status = 'detected'; // Reset it
             StateManager.saveState();
             renderFileList();
@@ -3004,6 +3027,34 @@
         }
     }
 
+    // Generate the correct download filename using detected file type (magic-number based).
+    // If AUTO_RENAME_DOWNLOADS is enabled and the detected extension differs from the URL
+    // extension, the file is renamed so the OS/apps recognise it correctly.
+    function generateDownloadFilename(fileData) {
+        try {
+            const originalUrl = fileData.originalUrl || fileData.url;
+            const stem = getFilenameStem(originalUrl);
+            const urlFilename = originalUrl.split('/').pop();
+            const urlExt = urlFilename.substring(stem.length + 1).toLowerCase();
+
+            // Detected extension stored by snipeFileType / updateFound (strip leading dot)
+            const detectedExt = fileData.extension
+                ? fileData.extension.replace(/^\./, '').toLowerCase()
+                : null;
+
+            if (CONFIG.AUTO_RENAME_DOWNLOADS && detectedExt && detectedExt !== urlExt) {
+                const newFilename = `${stem}.${detectedExt}`;
+                console.log(`[Auto-Rename] "${urlFilename}" → "${newFilename}" (magic-bytes detected: ${fileData.type || detectedExt})`);
+                return newFilename;
+            }
+
+            // No rename needed – use the already-resolved URL filename
+            return fileData.url.split('/').pop();
+        } catch (e) {
+            return fileData.url.split('/').pop();
+        }
+    }
+
     // State Management Object
     const StateManager = {
         STORAGE_KEY: 'dojFileDetectorState',
@@ -3224,6 +3275,7 @@
                 file.category = fileData.category;
                 file.extension = fileData.extension;
                 file.status = 'found';
+                if (fileData.confirmedPdf) file.confirmedPdf = true;
 
                 // Ensure originalUrl is set
                 if (!file.originalUrl) file.originalUrl = oldUrl;
